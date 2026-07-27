@@ -1,0 +1,1213 @@
+{
+  "_meta": {
+    "sistema": "CAPA 8 - Sistema de Gestión de Colaboradores - Servnet",
+    "proposito": "Contexto de schema para pruebas de escritorio con Hermes3. NO ejecutar queries reales. Solo referencia para razonamiento del modelo.",
+    "fuente": "db_schema.php + DESCRIBE real vía MCP (modulos, whmcs81a)",
+    "actualizado": "2026-07-23",
+    "cobertura": "31 tablas documentadas + 42 tablas enriquecidas con tipos reales"
+  },
+
+  "tablas": {
+
+    "modulos.tblColaborador": {
+      "desc": "Colaboradores de la empresa",
+      "columnas": {
+        "id":               "INT - PK, ID único del colaborador",
+        "Nombres":          "VARCHAR - Nombre(s). ADVERTENCIA: columna con N mayúscula",
+        "Apellidos":        "VARCHAR - Apellidos. ADVERTENCIA: columna con A mayúscula",
+        "correo":           "VARCHAR - Correo electrónico corporativo",
+        "correoPersonal":   "VARCHAR - Correo electrónico personal",
+        "puestoId":         "INT - FK -> modulos.tblPuesto.id",
+        "lider":            "ENUM('si','no') - Es líder",
+        "activo":           "TINYINT - TRAMPA: 0=ACTIVO, 1=INACTIVO (invertido)",
+        "fechaIngreso":     "DATE - Fecha de ingreso a la empresa",
+        "fechaTermino":     "DATE - Fecha de baja. NULL si sigue activo",
+        "servnetId":        "INT - ID en sistema Servnet",
+        "genero":           "VARCHAR - Género del colaborador",
+        "celularServnet":   "VARCHAR - Celular corporativo",
+        "extServnet":       "VARCHAR - Extensión telefónica",
+        "registroPatronal": "VARCHAR - Registro patronal",
+        "profileUrl":       "VARCHAR - URL de foto de perfil",
+        "NSS":              "VARCHAR - Número de Seguro Social",
+        "curp":             "VARCHAR - CURP",
+        "rfc":              "VARCHAR - RFC",
+        "paternidad":       "ENUM('si','no') - Tiene permiso de paternidad",
+        "maternidad":       "ENUM('si','no') - Tiene permiso de maternidad"
+      },
+      "notas": [
+        "TRAMPA CRITICA: activo=0 significa ACTIVO, activo=1 significa INACTIVO",
+        "SIN columna 'eliminado' — para filtrar activos usar solo: activo = 0",
+        "SIN columna 'telefono' — el celular corporativo es 'celularServnet'",
+        "SIN columna 'areaId' directa — el area se obtiene via JOIN: tblPuesto.areaId -> tblAreas.id",
+        "Nombres y Apellidos tienen la primera letra en MAYUSCULA en el nombre de columna",
+        "Buscar por nombre: WHERE CONCAT(Nombres, ' ', Apellidos) LIKE '%texto%'"
+      ],
+      "relaciones": {
+        "modulos.tblPuesto":             "puestoId -> tblPuesto.id (puesto del colaborador)",
+        "modulos.tblAreas":              "via tblPuesto.areaId -> tblAreas.id",
+        "modulos.tblDirecciones":        "via tblAreas.direccionId -> tblDirecciones.id",
+        "modulos.tblDiasVacaciones":     "colaboradorId (dias de vacaciones)",
+        "modulos.tblCumpleColaborador":  "colaboradorId (cumpleaños)",
+        "modulos.tblRelacionLideres":    "colaboradorId (relacion con lideres)",
+        "modulos.tblDireccionColaborador": "ColaboradorID con mayusculas (FK con C y D mayusculas)"
+      }
+    },
+
+    "modulos.tblPuesto": {
+      "desc": "Catálogo de puestos de la empresa",
+      "columnas": {
+        "id":          "INT - PK",
+        "nombrePuesto":"VARCHAR - Nombre del puesto",
+        "areaId":      "INT - FK -> modulos.tblAreas.id"
+      },
+      "notas": [
+        "Tabla intermedia para obtener el area de un colaborador"
+      ]
+    },
+
+    "modulos.tblAreas": {
+      "desc": "Áreas de la empresa",
+      "columnas": {
+        "id":          "INT - PK",
+        "nombreArea":  "VARCHAR - Nombre del area",
+        "direccionId": "INT - FK -> modulos.tblDirecciones.id"
+      }
+    },
+
+    "modulos.tblDirecciones": {
+      "desc": "Direcciones o Departamentos de la empresa",
+      "columnas": {
+        "id":              "INT - PK",
+        "nombreDireccion": "VARCHAR - Nombre de la direccion/departamento"
+      }
+    },
+
+    "modulos.tblSolicitudes": {
+      "desc": "Solicitudes de vacaciones y permisos",
+      "columnas": {
+        "id":            "INT - PK",
+        "colaboradorId": "INT - FK -> tblColaborador.id",
+        "diasTomados":   "INT - Días solicitados",
+        "iniciaF":       "DATE - Fecha de inicio del permiso",
+        "terminaF":      "DATE - Fecha de término del permiso",
+        "reiniciaF":     "DATE - Fecha de reinicio al trabajo",
+        "motivo":        "TEXT - Motivo de la solicitud",
+        "status":        "ENUM('Pendiente','Aceptada','Rechazada','Cancelada')",
+        "fecha":         "DATETIME - Fecha de creación del registro",
+        "visible":       "TINYINT - 1=solicitud normal, 0=oculta/especial",
+        "exepcion":      "TINYINT - 1=solicitud por excepción (nota: typo en nombre de columna)",
+        "autoriza":      "INT/VARCHAR - Quién autoriza (líder directo)",
+        "autorizaInd":   "INT/VARCHAR - Quién autoriza indirecto"
+      },
+      "notas": [
+        "exepcion=1 indica solicitudes por excepción (no excepción normal)",
+        "visible=1 son solicitudes normales, visible=0 son ocultas/especiales",
+        "ADVERTENCIA: columna se llama 'exepcion' (un solo c), no 'excepcion'"
+      ]
+    },
+
+    "modulos.tblSolicitudesExcepcion": {
+      "desc": "Solicitudes por excepción (misma estructura que tblSolicitudes)",
+      "columnas": "Mismas columnas que modulos.tblSolicitudes",
+      "notas": [
+        "Tabla separada para solicitudes de tipo excepción"
+      ]
+    },
+
+    "modulos.tblDiasVacaciones": {
+      "desc": "Días de vacaciones disponibles por colaborador",
+      "columnas": {
+        "id":                 "INT - PK",
+        "colaboradorId":      "INT - FK -> tblColaborador.id",
+        "diasActuales":       "INT - Días disponibles del período actual",
+        "fechaLimiteDA":      "DATE - Fecha límite para usar días actuales",
+        "diasPeridoAnterior": "INT - Días retenidos del período anterior (máx 5). ADVERTENCIA: typo 'Perido' no 'Periodo'",
+        "fechaLimiteDPA":     "DATE - Fecha límite para días del período anterior",
+        "diasPedidos":        "INT - Días ya utilizados en solicitudes Aceptadas",
+        "diasMaernidad":      "INT - Días de permiso de maternidad. ADVERTENCIA: typo 'Maernidad'",
+        "diasPaternidad":     "INT - Días de permiso de paternidad",
+        "diasExcepcion":      "INT - Días otorgados por excepción",
+        "lacdias":            "INT - Días de lactancia"
+      },
+      "notas": [
+        "ADVERTENCIA: columna 'diasPeridoAnterior' tiene typo (Perido en lugar de Periodo)",
+        "ADVERTENCIA: columna 'diasMaernidad' tiene typo (Maernidad en lugar de Maternidad)",
+        "diasPeridoAnterior tiene máximo 5 días (regla de negocio, no constraint de BD)",
+        "Total disponible = diasActuales + diasPeridoAnterior (máx 5) - diasPedidos"
+      ]
+    },
+
+    "tblSolicitudesDias_Log": {
+      "desc": "Log de actividades y cambios en solicitudes de días",
+      "columnas": {
+        "id":          "INT - PK",
+        "fecha":       "DATETIME - Fecha de la actividad",
+        "accion":      "TEXT - Descripción de la actividad",
+        "colaborador": "VARCHAR - Nombre del colaborador (desnormalizado)",
+        "diasTomados": "INT - Días relacionados con la acción",
+        "activo":      "TINYINT - 1=activo, 0=no activo"
+      }
+    },
+
+    "tblsolicitudesmantenimiento": {
+      "desc": "Solicitudes de mantenimiento TI",
+      "columnas": {
+        "id":                     "INT - PK",
+        "colaboradorId":          "INT - FK -> tblColaborador.id",
+        "dispositivoMarcador":    "VARCHAR - Tipo de dispositivo reportado",
+        "problemasSeleccionados": "TEXT/JSON - Problemas reportados",
+        "descripcionDetalle":     "TEXT - Descripción detallada",
+        "estatus":                "ENUM('Pendiente','En proceso','Completada','Cancelada','Rechazada')",
+        "fechaSolicitud":         "DATETIME - Fecha de la solicitud",
+        "comentariosTI":          "TEXT - Comentarios internos de TI"
+      }
+    },
+
+    "tblstockComputo": {
+      "desc": "Computadoras en stock (no asignadas)",
+      "columnas": {
+        "id":             "INT - PK",
+        "Marca":          "VARCHAR - Marca del equipo",
+        "Modelo":         "VARCHAR - Modelo",
+        "Procesador":     "VARCHAR - Especificación del procesador",
+        "RAM":            "VARCHAR - Memoria RAM",
+        "Almacenamiento": "VARCHAR - Almacenamiento",
+        "Serie":          "VARCHAR - Número de serie",
+        "Status":         "VARCHAR - Estado del equipo",
+        "eliminado":      "TINYINT - Registro eliminado lógicamente"
+      }
+    },
+
+    "tblasignacioncomputo": {
+      "desc": "Computadoras asignadas a colaboradores",
+      "columnas": {
+        "id":              "INT - PK",
+        "computoId":       "INT - FK -> tblstockComputo.id",
+        "colaboradorId":   "INT - FK -> tblColaborador.id",
+        "fechaAsignacion": "DATE - Fecha de asignación",
+        "eliminado":       "TINYINT - Asignación eliminada lógicamente"
+      }
+    },
+
+    "tblcelulares": {
+      "desc": "Celulares en stock",
+      "columnas": {
+        "id":       "INT - PK",
+        "Marca":    "VARCHAR - Marca",
+        "Modelo":   "VARCHAR - Modelo",
+        "IMEI":     "VARCHAR - IMEI del dispositivo",
+        "Numero":   "VARCHAR - Número telefónico asignado",
+        "eliminado":"TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblasignacioncelulares": {
+      "desc": "Celulares asignados a colaboradores",
+      "columnas": {
+        "id":            "INT - PK",
+        "celularId":     "INT - FK -> tblcelulares.id",
+        "colaboradorId": "INT - FK -> tblColaborador.id",
+        "eliminado":     "TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblmonitor": {
+      "desc": "Monitores en stock",
+      "columnas": {
+        "id":       "INT - PK",
+        "Marca":    "VARCHAR - Marca",
+        "Modelo":   "VARCHAR - Modelo",
+        "Serie":    "VARCHAR - Número de serie",
+        "eliminado":"TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblasignacionmonitor": {
+      "desc": "Monitores asignados a colaboradores",
+      "columnas": {
+        "id":            "INT - PK",
+        "monitorId":     "INT - FK -> tblmonitor.id",
+        "colaboradorId": "INT - FK -> tblColaborador.id",
+        "eliminado":     "TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblmouse": {
+      "desc": "Mouse en stock",
+      "columnas": {
+        "id":       "INT - PK",
+        "Marca":    "VARCHAR - Marca",
+        "Tipo":     "VARCHAR - Tipo de mouse",
+        "eliminado":"TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblasignacionmouse": {
+      "desc": "Mouse asignados a colaboradores",
+      "columnas": {
+        "id":            "INT - PK",
+        "mouseId":       "INT - FK -> tblmouse.id",
+        "colaboradorId": "INT - FK -> tblColaborador.id",
+        "eliminado":     "TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblteclado": {
+      "desc": "Teclados en stock",
+      "columnas": {
+        "id":       "INT - PK",
+        "Marca":    "VARCHAR - Marca",
+        "Tipo":     "VARCHAR - Tipo de teclado",
+        "eliminado":"TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblasignacionteclado": {
+      "desc": "Teclados asignados a colaboradores",
+      "columnas": {
+        "id":            "INT - PK",
+        "tecladoId":     "INT - FK -> tblteclado.id",
+        "colaboradorId": "INT - FK -> tblColaborador.id",
+        "eliminado":     "TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblaudifonos": {
+      "desc": "Audífonos en stock",
+      "columnas": {
+        "id":       "INT - PK",
+        "Marca":    "VARCHAR - Marca",
+        "Tipo":     "VARCHAR - Tipo de audífonos",
+        "eliminado":"TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblasignacionaudifonos": {
+      "desc": "Audífonos asignados a colaboradores",
+      "columnas": {
+        "id":            "INT - PK",
+        "audifonosId":   "INT - FK -> tblaudifonos.id",
+        "colaboradorId": "INT - FK -> tblColaborador.id",
+        "eliminado":     "TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tbllicencias": {
+      "desc": "Licencias de software disponibles",
+      "columnas": {
+        "id":       "INT - PK",
+        "nombre":   "VARCHAR - Nombre de la licencia/software",
+        "tipo":     "VARCHAR - Tipo de licencia",
+        "clave":    "VARCHAR - Clave o serial de la licencia",
+        "eliminado":"TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblasignacionlicencias": {
+      "desc": "Licencias asignadas a colaboradores",
+      "columnas": {
+        "id":              "INT - PK",
+        "licenciaId":      "INT - FK -> tbllicencias.id",
+        "colaboradorId":   "INT - FK -> tblColaborador.id",
+        "fechaAsignacion": "DATE - Fecha de asignación",
+        "eliminado":       "TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblequiposeguridad": {
+      "desc": "Equipo de seguridad en stock (EPP)",
+      "columnas": {
+        "equipoId":    "INT - PK (nombre de PK diferente: equipoId no id)",
+        "nombreEquipo":"VARCHAR - Nombre del equipo de seguridad",
+        "talla":       "VARCHAR - Talla del equipo",
+        "eliminado":   "TINYINT - Eliminado lógicamente"
+      },
+      "notas": [
+        "ADVERTENCIA: PK se llama 'equipoId', no 'id'"
+      ]
+    },
+
+    "tblasignacionequiposeg": {
+      "desc": "Equipo de seguridad asignado a colaboradores",
+      "columnas": {
+        "id":              "INT - PK",
+        "equiposegNombre": "VARCHAR - Nombre del equipo (desnormalizado)",
+        "nombreCompleto":  "VARCHAR - Nombre del colaborador (desnormalizado)",
+        "talla":           "VARCHAR - Talla asignada"
+      },
+      "notas": [
+        "Tabla desnormalizada — no tiene FK directa a tblColaborador por id"
+      ]
+    },
+
+    "tblGruposDistribucion": {
+      "desc": "Grupos de distribución de correo corporativo",
+      "columnas": {
+        "id":       "INT - PK",
+        "correo":   "VARCHAR - Dirección del grupo de distribución",
+        "eliminado":"TINYINT - Eliminado lógicamente"
+      }
+    },
+
+    "tblAsignacionGruposDist": {
+      "desc": "Colaboradores en grupos de distribución de correo",
+      "columnas": {
+        "id":               "INT - PK",
+        "grupoDistribucion":"VARCHAR - Correo del grupo (desnormalizado)",
+        "nombreCompleto":   "VARCHAR - Nombre del colaborador (desnormalizado)"
+      },
+      "notas": [
+        "Tabla desnormalizada — no usa IDs numéricos sino nombres directos"
+      ]
+    },
+
+    "modulos.tblCumpleColaborador": {
+      "desc": "Cumpleaños de colaboradores",
+      "columnas": {
+        "colaboradorId": "INT - FK -> tblColaborador.id",
+        "fechaCumple":   "DATE - Fecha de cumpleaños"
+      }
+    },
+
+    "modulos.tblRelacionLideres": {
+      "desc": "Relación entre colaboradores y sus líderes (jerarquía)",
+      "columnas": {
+        "colaboradorId":    "INT - FK -> tblColaborador.id",
+        "liderDirectoId":   "INT - FK -> tblColaborador.id (jefe inmediato)",
+        "liderIndirectoId": "INT - FK -> tblColaborador.id (jefe del jefe)"
+      },
+      "notas": [
+        "Tanto liderDirectoId como liderIndirectoId apuntan a tblColaborador"
+      ]
+    },
+
+    "modulos.tblBotHistorial": {
+      "desc": "Historial de preguntas y SQL generado por el asistente IA",
+      "columnas": {
+        "id":                "INT - PK",
+        "colaboradorId":     "INT - FK -> tblColaborador.id",
+        "rolUsado":          "ENUM('admin','ti','people','lider','colaborador')",
+        "pregunta":          "TEXT - Pregunta en lenguaje natural",
+        "hash_pregunta":     "VARCHAR(64) - SHA256 de la pregunta (caché)",
+        "sqlGenerado":       "TEXT - SQL generado, o 'PREGUNTA_GENERAL' o 'NO_AUTORIZADO'",
+        "respuestaJson":     "JSON - Respuesta completa enviada al usuario",
+        "tiempoRespuestaMs": "INT - Tiempo de respuesta en milisegundos",
+        "estatus":           "ENUM('Exitoso','Error')",
+        "fechaRegistro":     "DATETIME - Fecha y hora del registro"
+      }
+    },
+
+    "tblAntiguedad": {
+      "desc": "Antigüedad calculada de colaboradores (años, meses, días)",
+      "columnas": {
+        "id":     "INT PK auto_increment",
+        "userid": "INT - FK -> tblColaborador.id",
+        "annos":  "INT - Años completos de antigüedad",
+        "meses":  "INT - Meses adicionales",
+        "dias":   "INT - Días adicionales"
+      },
+      "notas": [
+        "Tabla auxiliar; para cálculo en tiempo real usar: TIMESTAMPDIFF(YEAR, fechaIngreso, CURDATE())"
+      ]
+    },
+
+    "tblBajaColaborador": {
+      "desc": "Registro de bajas de colaboradores",
+      "columnas": {
+        "id":            "INT PK auto_increment",
+        "ColaboradorID": "INT - FK -> tblColaborador.id (mayúsculas C y D)",
+        "fehcaBaja":     "DATE - Fecha de baja. ADVERTENCIA: typo en columna (fehca no fecha)",
+        "tipoSalida":    "VARCHAR(50) NOT NULL - Tipo de salida",
+        "motivo":        "VARCHAR(50) NOT NULL - Motivo de la baja",
+        "recontratable": "VARCHAR(2) - ¿Es recontratable? (si/no)"
+      },
+      "notas": [
+        "TRAMPA: columna se llama 'fehcaBaja' con typo (falta la 'c' en fecha)",
+        "FK usa ColaboradorID con mayúsculas (igual que tblDireccionColaborador)",
+        "Relacionada con tblRecontratacion cuando el colaborador regresa"
+      ]
+    },
+
+    "tblRecontratacion": {
+      "desc": "Registro de recontrataciones (colaboradores que regresan tras baja)",
+      "columnas": {
+        "id":              "INT PK auto_increment",
+        "colaboradorId":   "INT NOT NULL - FK -> tblColaborador.id",
+        "fechaReingreso":  "DATE NOT NULL - Fecha de regreso",
+        "bajaId":          "INT - FK -> tblBajaColaborador.id (baja original)",
+        "registradoPor":   "INT - FK -> tblColaborador.id (quien registró)",
+        "fechaRegistro":   "DATETIME NOT NULL - Timestamp del registro"
+      }
+    },
+
+    "tblColaboradorArchivos": {
+      "desc": "Archivos y documentos de colaboradores (Google Drive o local)",
+      "columnas": {
+        "id":                 "INT PK auto_increment",
+        "colaboradorId":      "INT NOT NULL MUL - FK -> tblColaborador.id",
+        "tipoArchivo":        "VARCHAR(50) NOT NULL MUL - Tipo de documento (contrato, INE, CURP, etc.)",
+        "driveFileId":        "VARCHAR(150) - ID del archivo en Google Drive",
+        "driveUrl":           "VARCHAR(600) - URL del archivo en Google Drive",
+        "driveFolder":        "VARCHAR(150) - Carpeta en Google Drive",
+        "localPath":          "VARCHAR(500) - Ruta local del archivo",
+        "localUrl":           "VARCHAR(600) - URL local del archivo",
+        "nombreOriginal":     "VARCHAR(255) - Nombre original del archivo",
+        "mimeType":           "VARCHAR(100) - Tipo MIME",
+        "tamanoBytes":        "INT - Tamaño en bytes",
+        "activo":             "TINYINT(1) NOT NULL DEFAULT 1 MUL - 1=activo, 0=eliminado",
+        "subidoPor":          "INT - FK -> tblColaborador.id (quien subió)",
+        "fechaSubida":        "DATETIME NOT NULL - Timestamp subida (auto current_timestamp)",
+        "fechaActualizacion": "DATETIME - Timestamp última actualización (auto update)",
+        "notas":              "TEXT - Notas adicionales"
+      }
+    },
+
+    "tblNuevosColaboradoresTracking": {
+      "desc": "Tracking de onboarding: envío de recordatorios de herramientas a nuevos colaboradores",
+      "columnas": {
+        "colaboradorId":          "INT NOT NULL UNI - FK -> tblColaborador.id (unique: 1 fila por colaborador)",
+        "liderDirectoId":         "INT NOT NULL MUL - FK -> tblColaborador.id (líder)",
+        "fechaIngreso":           "DATE - Fecha de ingreso del colaborador",
+        "herramientasSeleccionadas": "TINYINT(1) DEFAULT 0 MUL - Se seleccionaron las herramientas",
+        "recordatoriosEnviados":  "INT DEFAULT 0 - Número de recordatorios enviados",
+        "ultimoRecordatorio":     "DATETIME - Fecha del último recordatorio enviado",
+        "fechaCreacion":          "DATETIME DEFAULT current_timestamp"
+      },
+      "notas": [
+        "Relacionada con tblRecordatoriosHerramientas para el log de envíos"
+      ]
+    },
+
+    "tblRecordatoriosHerramientas": {
+      "desc": "Log de envío de recordatorio de herramientas a colaborador (tabla simple)",
+      "columnas": {
+        "colaboradorId": "INT PK - FK -> tblColaborador.id (PK sin auto_increment)",
+        "fechaEnvio":    "DATETIME - Fecha del último envío"
+      },
+      "notas": [
+        "PK sin auto_increment - solo un registro por colaborador"
+      ]
+    },
+
+    "tblContactosColaborador": {
+      "desc": "Contactos de emergencia de colaboradores",
+      "columnas": {
+        "id":            "INT PK auto_increment",
+        "ColaboradorID": "INT - FK -> tblColaborador.id (mayúsculas C y D)",
+        "nombreContaco": "VARCHAR(50) NOT NULL - ADVERTENCIA: typo (Contaco no Contacto)",
+        "parentesco":    "VARCHAR(30) NOT NULL - Relación (madre, padre, cónyuge, etc.)",
+        "telefono":      "VARCHAR(13) NOT NULL - Teléfono de contacto"
+      },
+      "notas": [
+        "TRAMPA: columna se llama 'nombreContaco' (typo, falta 't')",
+        "FK usa ColaboradorID con mayúsculas"
+      ]
+    },
+
+    "tblContactos": {
+      "desc": "Contactos de colaboradores (tabla alternativa/legacy)",
+      "columnas": {
+        "id":            "INT UNSIGNED PK auto_increment",
+        "Nombre":        "VARCHAR(40) NOT NULL - Nombre del contacto (mayúscula N)",
+        "Parentesco":    "VARCHAR(40) NOT NULL - Relación (mayúscula P)",
+        "Telefono":      "VARCHAR(40) NOT NULL - Teléfono (mayúscula T)",
+        "colaboradorId": "INT NOT NULL - FK -> tblColaborador.id"
+      },
+      "notas": [
+        "Similar a tblContactosColaborador pero con nombres de columna con mayúscula",
+        "Usar tblContactosColaborador para la versión más reciente"
+      ]
+    },
+
+    "tblPuestoJerarquia": {
+      "desc": "Jerarquía de puestos (árbol de puestos padre-hijo)",
+      "columnas": {
+        "id":                  "INT PK auto_increment",
+        "puestoId":            "INT NOT NULL - FK -> tblPuesto.id",
+        "puestoPadreId":       "INT - FK -> tblPuesto.id (puesto superior, NULL si es raíz)",
+        "areaId":              "INT NOT NULL - FK -> tblAreas.id",
+        "activo":              "TINYINT(1) NOT NULL DEFAULT 1",
+        "fechaCreacion":       "TIMESTAMP NOT NULL DEFAULT current_timestamp",
+        "fechaModificacion":   "TIMESTAMP - auto update on change"
+      }
+    },
+
+    "tblPuestoOcupacion": {
+      "desc": "Historial de qué colaborador ha ocupado cada puesto y cuándo",
+      "columnas": {
+        "id":            "INT PK auto_increment",
+        "puestoId":      "INT NOT NULL - FK -> tblPuesto.id",
+        "colaboradorId": "INT - FK -> tblColaborador.id (NULL si puesto vacante)",
+        "fechaInicio":   "DATE - Cuando el colaborador tomó el puesto",
+        "fechaFin":      "DATE - Cuando dejó el puesto (NULL si activo)",
+        "activo":        "TINYINT(4) DEFAULT 1"
+      }
+    },
+
+    "tblVacantes": {
+      "desc": "Vacantes de trabajo publicadas",
+      "columnas": {
+        "id":                 "INT PK auto_increment",
+        "puesto":             "VARCHAR(255) NOT NULL - Nombre del puesto buscado",
+        "puestoId":           "INT - FK -> tblPuesto.id",
+        "area":               "VARCHAR(255) NOT NULL - Nombre del área",
+        "areaId":             "INT - FK -> tblAreas.id",
+        "lider":              "VARCHAR(255) NOT NULL - Nombre del líder responsable",
+        "liderColabId":       "INT - FK -> tblColaborador.id (líder)",
+        "contrato":           "VARCHAR(255) NOT NULL - Tipo de contrato",
+        "mesesContrato":      "INT - Duración en meses (NULL si indefinido)",
+        "prioridad":          "VARCHAR(50) DEFAULT 'Media'",
+        "estatus":            "VARCHAR(50) DEFAULT 'Abierta'",
+        "fecha":              "DATE - Fecha de publicación",
+        "descripcion":        "TEXT - Descripción del puesto",
+        "salario":            "VARCHAR(255) - Rango salarial",
+        "modalidad":          "VARCHAR(255) DEFAULT 'Presencial'",
+        "camposExtra":        "TEXT - Campos adicionales en JSON",
+        "fechaRegistro":      "TIMESTAMP DEFAULT current_timestamp"
+      }
+    },
+
+    "tblPostulaciones": {
+      "desc": "Postulaciones recibidas a vacantes",
+      "columnas": {
+        "id":                      "INT PK auto_increment",
+        "vacanteId":               "INT NOT NULL - FK -> tblVacantes.id",
+        "nombre":                  "VARCHAR(255) NOT NULL - Nombre del candidato",
+        "correo":                  "VARCHAR(255) NOT NULL",
+        "telefono":                "VARCHAR(50)",
+        "estado":                  "VARCHAR(100) - Estado del candidato",
+        "municipio":               "VARCHAR(100)",
+        "gradoEstudios":           "VARCHAR(100)",
+        "tieneConocido":           "VARCHAR(10) - ¿Conoce a alguien en la empresa?",
+        "expectativaSalarial":     "VARCHAR(100)",
+        "trabajandoActualmente":   "VARCHAR(10)",
+        "horarioEntrevista":       "VARCHAR(255)",
+        "motivoInteres":           "TEXT",
+        "medioConocimiento":       "VARCHAR(255) - Cómo se enteró de la vacante",
+        "cvRuta":                  "VARCHAR(255) - Ruta del CV subido",
+        "respuestasExtra":         "TEXT - Respuestas a preguntas extra en JSON",
+        "estatus":                 "VARCHAR(50) DEFAULT 'procede'",
+        "fechaPostulacion":        "TIMESTAMP DEFAULT current_timestamp"
+      }
+    },
+
+    "tblSolicitudesLactancia": {
+      "desc": "Horarios de lactancia vinculados a solicitudes de permiso",
+      "columnas": {
+        "id":          "INT PK auto_increment",
+        "solicitudId": "INT NOT NULL - FK -> tblSolicitudes.id",
+        "inicia":      "TIME NOT NULL - Hora inicio primer período de lactancia",
+        "termina":     "TIME NOT NULL - Hora fin primer período",
+        "inicia2":     "TIME - Hora inicio segundo período (opcional)",
+        "termina2":    "TIME - Hora fin segundo período (opcional)"
+      }
+    },
+
+    "tblOtrasSolicitudes": {
+      "desc": "Catálogo de tipos de solicitudes especiales con sus días permitidos",
+      "columnas": {
+        "id":                    "INT PK auto_increment",
+        "TipoSolicitud":         "CHAR(55) NOT NULL - Nombre del tipo de solicitud",
+        "NumeroDiasPuedeTomar":  "INT NOT NULL - Máximo de días permitidos para ese tipo"
+      }
+    },
+
+    "tblnotificacionColaborador": {
+      "desc": "Notificaciones internas para colaboradores en el sistema",
+      "columnas": {
+        "id":                   "INT PK auto_increment",
+        "ColaboradorUrlProfile": "VARCHAR(150) - URL del avatar del colaborador",
+        "ColaboradorID":        "INT - FK -> tblColaborador.id (mayúsculas C y D)",
+        "IdSolicitud":          "INT - FK a la solicitud relacionada",
+        "mensaje":              "VARCHAR(150) NOT NULL - Texto de la notificación",
+        "fecha":                "DATE NOT NULL",
+        "tipoNotificacion":     "ENUM('notificacion','mensaje') DEFAULT 'notificacion'",
+        "urgencia":             "ENUM('warning','ifo','primary','success') DEFAULT 'ifo' - ADVERTENCIA: typo 'ifo' no 'info'",
+        "visible":              "INT(1) NOT NULL - 1=visible, 0=leída/oculta",
+        "nombreColaborador":    "VARCHAR(45) - Nombre desnormalizado",
+        "Url":                  "VARCHAR(150) NOT NULL - URL de acción de la notificación"
+      },
+      "notas": [
+        "TRAMPA: urgencia ENUM tiene 'ifo' en lugar de 'info' (typo en BD)",
+        "FK usa ColaboradorID con mayúsculas"
+      ]
+    },
+
+    "tblGruposAreas": {
+      "desc": "Relación entre grupos y áreas (tabla pivot)",
+      "columnas": {
+        "id":      "INT PK auto_increment",
+        "grupoId": "INT NOT NULL - FK al grupo",
+        "areaId":  "INT UNSIGNED - FK -> tblAreas.id"
+      }
+    },
+
+    "tblEquiposComputo": {
+      "desc": "Computadoras asignadas a colaboradores (tabla legacy/operativa - diferente de tblstockComputo)",
+      "columnas": {
+        "id":             "INT PK auto_increment",
+        "Marca":          "VARCHAR(25) - Marca (columna con M mayúscula)",
+        "Modelo":         "VARCHAR(30) - Modelo (columna con M mayúscula)",
+        "Serie":          "VARCHAR(25) - Número de serie (columna con S mayúscula)",
+        "cambios":        "VARCHAR(300) - Historial de cambios/actualizaciones",
+        "colaboradorId":  "INT - FK -> tblColaborador.id (asignada a)",
+        "Procesador":     "VARCHAR(25)",
+        "RAM":            "VARCHAR(25)",
+        "Almacenamiento": "VARCHAR(25)",
+        "estatus":        "VARCHAR(15) NOT NULL DEFAULT 'Asignada'"
+      },
+      "notas": [
+        "Tabla legacy: tiene colaboradorId directamente (no usa tabla de asignación separada)",
+        "Diferente a tblstockComputo que es inventario sin asignar",
+        "tbldetalles_equipo es la versión moderna y más completa"
+      ]
+    },
+
+    "tbldetalles_equipo": {
+      "desc": "Catálogo detallado moderno de todos los equipos (reemplaza tablas legacy de stock)",
+      "columnas": {
+        "id":                  "INT UNSIGNED PK auto_increment",
+        "tipo_dispositivo":    "ENUM('COMPUTADORA','MONITOR','MOUSE','CELULAR','AUDIFONOS','TECLADO','OTRO') NOT NULL MUL",
+        "dispositivo_id":      "INT UNSIGNED NOT NULL - ID en la tabla del tipo específico",
+        "colaborador_id":      "INT UNSIGNED - FK -> tblColaborador.id (NULL si no asignado)",
+        "nombre_equipo":       "VARCHAR(150) - Nombre/alias del equipo",
+        "numero_serie":        "VARCHAR(100) - Número de serie",
+        "fecha_fabricacion":   "DATE",
+        "fecha_ingreso":       "DATE - Cuando ingresó al inventario",
+        "fecha_garantia_fin":  "DATE - Fin de garantía",
+        "proveedor":           "VARCHAR(150)",
+        "costo_compra":        "DECIMAL(10,2)",
+        "extension_tel":       "VARCHAR(20) - Extensión telefónica (para computadoras/celulares)",
+        "ubicacion":           "VARCHAR(100)",
+        "notas":               "TEXT",
+        "estatus_equipo":      "ENUM('activo','en_reparacion','almacenado','baja') NOT NULL DEFAULT 'activo'",
+        "proximo_mant_manual": "DATE - Próximo mantenimiento programado manualmente"
+      },
+      "notas": [
+        "Tabla polimórfica: tipo_dispositivo + dispositivo_id apuntan a la tabla específica",
+        "Versión moderna que centraliza info de todos los tipos de equipo",
+        "Relacionada con tblmantenimiento_log para historial de eventos"
+      ]
+    },
+
+    "tblequipo_adjuntos": {
+      "desc": "Adjuntos (facturas, fotos, garantías) de equipos",
+      "columnas": {
+        "id":               "INT UNSIGNED PK auto_increment",
+        "tipo_dispositivo": "ENUM('COMPUTADORA','MONITOR','MOUSE','CELULAR','AUDIFONOS','TECLADO','OTRO') NOT NULL MUL",
+        "dispositivo_id":   "INT UNSIGNED NOT NULL - ID del equipo",
+        "tipo_adjunto":     "ENUM('factura','manual','foto','garantia','otro') NOT NULL DEFAULT 'otro'",
+        "nombre_archivo":   "VARCHAR(255) NOT NULL",
+        "ruta_archivo":     "VARCHAR(500) NOT NULL",
+        "tamano_bytes":     "INT UNSIGNED NOT NULL DEFAULT 0",
+        "admin_nombre":     "VARCHAR(150) NOT NULL - Nombre del admin que subió",
+        "fecha_subida":     "DATETIME NOT NULL DEFAULT current_timestamp"
+      }
+    },
+
+    "tblequipoareas": {
+      "desc": "Distribución de equipo de seguridad por área (cuántas unidades tiene cada área)",
+      "columnas": {
+        "id":              "INT PK auto_increment",
+        "areaId":          "INT UNSIGNED MUL - FK -> tblAreas.id",
+        "eliminado":       "TINYINT(4) DEFAULT 0",
+        "equipoId":        "INT - FK -> tblequiposeguridad.equipoId",
+        "cantidadArea":    "INT(15) - Cantidad asignada al área",
+        "areas":           "VARCHAR(255) NOT NULL - Nombre del área (desnormalizado)"
+      }
+    },
+
+    "tblequipoTecnologico": {
+      "desc": "Checklist de equipos tecnológicos asignados a colaborador (boolean por tipo)",
+      "columnas": {
+        "id":             "INT PK auto_increment",
+        "Computadora":    "TINYINT(4) - 1=tiene, NULL=no tiene",
+        "Celular":        "TINYINT(4)",
+        "Headset":        "TINYINT(4)",
+        "Mouse":          "TINYINT(4)",
+        "Teclado":        "TINYINT(4)",
+        "Monitor":        "TINYINT(4)",
+        "coladoradorId":  "INT UNI - FK -> tblColaborador.id. ADVERTENCIA: typo (coladorador doble a)"
+      },
+      "notas": [
+        "TRAMPA CRITICA: FK se llama 'coladoradorId' con doble 'a' (typo grave)",
+        "Tabla de checklist booleano: registra QUÉ tipos de equipo tiene el colaborador",
+        "Para saber el equipo específico usar tbldetalles_equipo o tablas de asignación"
+      ]
+    },
+
+    "tblmantenimiento_log": {
+      "desc": "Log de eventos de mantenimiento de equipos (ingresos, reparaciones, bajas)",
+      "columnas": {
+        "id":               "INT UNSIGNED PK auto_increment",
+        "tipo_dispositivo": "ENUM('COMPUTADORA','MONITOR','MOUSE','CELULAR','AUDIFONOS','TECLADO','OTRO') NOT NULL MUL",
+        "dispositivo_id":   "INT UNSIGNED NOT NULL",
+        "tipo_evento":      "ENUM('ingreso','asignacion','mantenimiento','reparacion','cambio_pieza','almacenado','baja') NOT NULL",
+        "descripcion":      "TEXT NOT NULL",
+        "costo":            "DECIMAL(10,2) - Costo del evento (reparación, etc.)",
+        "admin_nombre":     "VARCHAR(150) NOT NULL",
+        "admin_email":      "VARCHAR(150) NOT NULL",
+        "fecha":            "DATETIME NOT NULL MUL DEFAULT current_timestamp"
+      }
+    },
+
+    "tblmantenimiento_config": {
+      "desc": "Configuración del período de mantenimiento preventivo por tipo de dispositivo",
+      "columnas": {
+        "id":               "INT UNSIGNED PK auto_increment",
+        "tipo_dispositivo": "ENUM('COMPUTADORA','MONITOR','MOUSE','CELULAR','AUDIFONOS','TECLADO','OTRO') NOT NULL UNI",
+        "periodo_dias":     "INT NOT NULL DEFAULT 180 - Días entre mantenimientos preventivos"
+      }
+    },
+
+    "tbllicenciapuestos": {
+      "desc": "Pivot: licencias requeridas por puesto (qué licencias necesita cada puesto)",
+      "columnas": {
+        "licenciaId": "INT NOT NULL PK - FK -> tbllicencias.id",
+        "puestoId":   "INT UNSIGNED NOT NULL PK - FK -> tblPuesto.id"
+      },
+      "notas": [
+        "Clave primaria compuesta: (licenciaId, puestoId)",
+        "Define qué licencias de software se asignan automáticamente según el puesto"
+      ]
+    },
+
+    "tbllicenciasareas": {
+      "desc": "Licencias asignadas por área con control de cantidad",
+      "columnas": {
+        "id":            "INT PK auto_increment",
+        "areaId":        "INT UNSIGNED MUL - FK -> tblAreas.id",
+        "eliminado":     "TINYINT(4) DEFAULT 0",
+        "licenciaId":    "INT - FK -> tbllicencias.id",
+        "cantidadArea":  "INT(15) - Cantidad de licencias para el área",
+        "areas":         "VARCHAR(255) NOT NULL - Nombre del área (desnormalizado)"
+      }
+    },
+
+    "tblproblemascomputadoras": {
+      "desc": "Catálogo de problemas comunes para solicitudes de mantenimiento",
+      "columnas": {
+        "id":             "INT PK auto_increment",
+        "problemaId":     "INT - Agrupación de problemas",
+        "nombreProblema": "VARCHAR(100) NOT NULL - Descripción del problema",
+        "activo":         "TINYINT(1) DEFAULT 1"
+      }
+    },
+
+    "tbl_activos_catalog": {
+      "desc": "Catálogo de activos generales (diferente al equipo cómputo/periféricos)",
+      "columnas": {
+        "id":             "INT PK auto_increment",
+        "categoria":      "VARCHAR(50) NOT NULL MUL - Categoría del activo",
+        "nombre":         "VARCHAR(255) NOT NULL",
+        "descripcion":    "TEXT",
+        "costo_unitario": "DECIMAL(12,2) DEFAULT 0.00",
+        "stock_total":    "INT DEFAULT 0",
+        "stock_minimo":   "INT DEFAULT 5 - Alerta cuando el stock baja de este número",
+        "stock_asignado": "INT DEFAULT 0",
+        "imagen":         "VARCHAR(500) - URL o ruta de imagen",
+        "activo":         "TINYINT(1) DEFAULT 1 MUL",
+        "fecha_alta":     "DATETIME DEFAULT current_timestamp"
+      }
+    },
+
+    "tbl_activos_asignaciones": {
+      "desc": "Asignaciones de activos generales a colaboradores",
+      "columnas": {
+        "id":               "INT PK auto_increment",
+        "activo_id":        "INT NOT NULL MUL - FK -> tbl_activos_catalog.id",
+        "colaboradorId":    "INT NOT NULL MUL - FK -> tblColaborador.id",
+        "fecha_asignacion": "DATETIME DEFAULT current_timestamp",
+        "estatus":          "VARCHAR(50) DEFAULT 'Activo'",
+        "serie":            "VARCHAR(100) - Número de serie si aplica",
+        "notas":            "TEXT",
+        "fecha_entrega":    "DATETIME",
+        "fecha_devolucion": "DATETIME - NULL si sigue asignado"
+      }
+    },
+
+    "tbl_activos_solicitudes": {
+      "desc": "Solicitudes de activos generales (peticiones de asignación, devolución, reparación)",
+      "columnas": {
+        "id":                  "INT PK auto_increment",
+        "colaboradorId":       "INT NOT NULL MUL - FK -> tblColaborador.id (solicitante)",
+        "activo_id":           "INT - FK -> tbl_activos_catalog.id (NULL si solicita sin especificar)",
+        "tipo_solicitud":      "VARCHAR(50) NOT NULL - Tipo (asignacion, devolucion, reparacion, etc.)",
+        "descripcion":         "TEXT",
+        "estatus_actual":      "VARCHAR(50) DEFAULT 'Pendiente' MUL",
+        "area_actual":         "VARCHAR(50) DEFAULT 'OSP' MUL - Área responsable actual",
+        "responsable_id":      "INT - FK -> tblColaborador.id (responsable actual)",
+        "prioridad":           "VARCHAR(20) DEFAULT 'Normal'",
+        "fecha_solicitud":     "DATETIME DEFAULT current_timestamp",
+        "fecha_actualizacion": "DATETIME",
+        "solicitante_id":      "INT - FK -> tblColaborador.id (puede diferir de colaboradorId)"
+      }
+    },
+
+    "tbl_activos_seguimiento": {
+      "desc": "Log de cambios de etapa en solicitudes de activos",
+      "columnas": {
+        "id":            "INT PK auto_increment",
+        "solicitud_id":  "INT NOT NULL MUL - FK -> tbl_activos_solicitudes.id",
+        "etapa":         "VARCHAR(50) NOT NULL - Etapa alcanzada",
+        "comentario":    "TEXT",
+        "usuario_id":    "INT - FK -> tblColaborador.id",
+        "nombre_usuario":"VARCHAR(255) - Nombre desnormalizado",
+        "fecha":         "DATETIME DEFAULT current_timestamp"
+      }
+    },
+
+    "tbl_tipos_equipo": {
+      "desc": "Catálogo de tipos de equipo disponibles",
+      "columnas": {
+        "id":     "INT UNSIGNED PK auto_increment",
+        "tipo":   "VARCHAR(50) NOT NULL UNI - Clave del tipo",
+        "nombre": "VARCHAR(100) NOT NULL - Nombre legible",
+        "activo": "TINYINT(1) NOT NULL DEFAULT 1"
+      }
+    },
+
+    "tblalmacen": {
+      "desc": "Inventario de ropa/uniformes por sucursal y talla",
+      "columnas": {
+        "id":                 "INT PK auto_increment",
+        "sucursalId":         "INT NOT NULL UNI - FK -> tblsucursal.id",
+        "tipoPrenda":         "VARCHAR(256) - Tipo de prenda (camisa, pantalón, etc.)",
+        "talla":              "VARCHAR(10) - Talla",
+        "cantidadDisponible": "INT NOT NULL - Unidades disponibles"
+      },
+      "notas": [
+        "IMPORTANTE: Esta tabla es de ROPA/UNIFORMES, NO de equipo de cómputo",
+        "Relacionada con tblsucursal para controlar stock por sede"
+      ]
+    },
+
+    "tblalmacenaudifonos": {
+      "desc": "Stock de audífonos/headsets por modelo (tabla de inventario)",
+      "columnas": {
+        "audifonosId": "INT NOT NULL - FK -> tblaudifonos.id (no es PK auto)",
+        "modelo":      "VARCHAR(100) - Modelo del headset",
+        "disponibles": "INT - Unidades disponibles",
+        "ocupadas":    "INT - Unidades asignadas",
+        "total":       "INT - Total en inventario",
+        "eliminado":   "TINYINT(4)"
+      },
+      "notas": [
+        "Tablas similares existen para otros periféricos: tblalmacencelulares, tblalmacenmonitor, tblalmacenmouse, tblalmacenteclado, tblalmacenequiposeg, tblalmacenlicencias"
+      ]
+    },
+
+    "tblsucursal": {
+      "desc": "Catálogo de sucursales/sedes de la empresa",
+      "columnas": {
+        "id":     "INT PK auto_increment",
+        "nombre": "VARCHAR(50) - Nombre de la sucursal"
+      }
+    },
+
+    "tblotros_equipos": {
+      "desc": "Catálogo de otros tipos de equipos no clasificados en las tablas específicas",
+      "columnas": {
+        "id":          "INT UNSIGNED PK auto_increment",
+        "nombre":      "VARCHAR(150) NOT NULL - Nombre del tipo de equipo",
+        "descripcion": "VARCHAR(255)"
+      }
+    },
+
+    "tblsolicitudesadjuntos": {
+      "desc": "Archivos adjuntos en solicitudes de mantenimiento TI",
+      "columnas": {
+        "id":            "INT UNSIGNED PK auto_increment",
+        "solicitudId":   "INT UNSIGNED NOT NULL MUL - FK -> tblsolicitudesmantenimiento.id",
+        "nombreArchivo": "VARCHAR(255) NOT NULL",
+        "rutaArchivo":   "VARCHAR(500) NOT NULL",
+        "tamanoBytes":   "INT UNSIGNED NOT NULL DEFAULT 0",
+        "fechaSubida":   "DATETIME NOT NULL DEFAULT current_timestamp"
+      }
+    },
+
+    "tblvisitas": {
+      "desc": "Visitas al datacenter/keystone: registro de acceso controlado con QR",
+      "columnas": {
+        "id":                      "INT UNSIGNED PK auto_increment",
+        "folio":                   "VARCHAR(20) NOT NULL UNI - Folio de la visita",
+        "client_id":               "INT UNSIGNED NOT NULL MUL - FK -> whmcs81a.tblclients.id",
+        "punto_acceso":            "ENUM('dc','keystone','otro') NOT NULL DEFAULT 'dc'",
+        "gabinete":                "VARCHAR(120) - Gabinete al que accede",
+        "tiempo_aproximado":       "ENUM('1h','2h','3h')",
+        "fecha_visita":            "DATETIME NOT NULL MUL",
+        "estado":                  "ENUM('solicitada','en_revision','cambio_lider','cambio_cliente','confirmada','en_proceso','completada','rechazada','noshow','cancelada') NOT NULL MUL",
+        "notas":                   "TEXT",
+        "creado_por":              "INT UNSIGNED NOT NULL DEFAULT 0",
+        "qr_token":                "VARCHAR(512) - Token QR para acceso",
+        "qr_usado":                "TINYINT(1) NOT NULL DEFAULT 0",
+        "created_at":              "TIMESTAMP DEFAULT current_timestamp",
+        "updated_at":              "TIMESTAMP auto update",
+        "ingresa_equipo":          "TINYINT(1) NOT NULL DEFAULT 0 - ¿Ingresa equipo?",
+        "equipo_serie":            "VARCHAR(120)",
+        "equipo_caracteristicas":  "TEXT",
+        "retira_equipo":           "TINYINT(1) NOT NULL DEFAULT 0 - ¿Retira equipo?",
+        "retiro_motivo":           "TEXT",
+        "retiro_detalles":         "TEXT",
+        "retiro_serie":            "VARCHAR(120)",
+        "retiro_caracteristicas":  "TEXT",
+        "deja_equipo":             "TINYINT(1) NOT NULL DEFAULT 0 - ¿Deja equipo en instalaciones?",
+        "deja_equipo_serie":       "VARCHAR(120)",
+        "deja_equipo_caracteristicas": "TEXT",
+        "observaciones_cierre":    "TEXT"
+      },
+      "notas": [
+        "client_id apunta a whmcs81a.tblclients (no a tblColaborador)",
+        "Sistema de visitas al datacenter con control QR"
+      ]
+    },
+
+    "tblvisitas_visitantes": {
+      "desc": "Visitantes registrados en cada visita al datacenter",
+      "columnas": {
+        "id":        "INT UNSIGNED PK auto_increment",
+        "visita_id": "INT UNSIGNED NOT NULL MUL - FK -> tblvisitas.id",
+        "nombre":    "VARCHAR(150) NOT NULL",
+        "ine":       "VARCHAR(50) - Número de INE",
+        "correo":    "VARCHAR(190)",
+        "telefono":  "VARCHAR(30)",
+        "qr_token":  "VARCHAR(64) - Token QR individual",
+        "qr_usado":  "TINYINT(1) NOT NULL DEFAULT 0"
+      }
+    },
+
+    "tblacceso_guardias": {
+      "desc": "Catálogo de guardias de seguridad que validan accesos",
+      "columnas": {
+        "id":         "INT UNSIGNED PK auto_increment",
+        "nombre":     "VARCHAR(120) NOT NULL",
+        "activo":     "TINYINT(1) NOT NULL DEFAULT 1",
+        "created_at": "TIMESTAMP DEFAULT current_timestamp"
+      }
+    },
+
+    "tblacceso_log": {
+      "desc": "Log de entradas físicas validadas por guardia (registro del QR escaneado)",
+      "columnas": {
+        "id":               "INT UNSIGNED PK auto_increment",
+        "visita_id":        "INT UNSIGNED NOT NULL MUL - FK -> tblvisitas.id",
+        "hora_entrada":     "DATETIME NOT NULL",
+        "punto_acceso":     "ENUM('dc','keystone','otro') NOT NULL",
+        "agente_recepcion": "VARCHAR(120) - Nombre del guardia que validó",
+        "ip_origen":        "VARCHAR(45) - IP desde donde se escaneó el QR",
+        "created_at":       "TIMESTAMP DEFAULT current_timestamp"
+      }
+    },
+
+    "tblPeopopHistorial": {
+      "desc": "Historial del asistente IA Peoopop para colaboradores (onboarding y touchpoints)",
+      "columnas": {
+        "id":                  "INT PK auto_increment",
+        "colaboradorId":       "INT NOT NULL MUL - FK -> tblColaborador.id",
+        "fase":                "TINYINT(4) NOT NULL MUL DEFAULT 1 - Fase del onboarding",
+        "touchpointDia":       "SMALLINT(6) - Día del touchpoint en el proceso",
+        "tipeMensaje":         "VARCHAR(30) NOT NULL DEFAULT 'libre'",
+        "pregunta":            "TEXT NOT NULL - Mensaje enviado al colaborador",
+        "respuesta":           "TEXT NOT NULL - Respuesta del colaborador",
+        "esProactivo":         "TINYINT(1) NOT NULL DEFAULT 0 - 1=mensaje proactivo del bot",
+        "alertaDisparada":     "VARCHAR(100) MUL - Alerta que disparó el mensaje proactivo",
+        "tiempoRespuestaMs":   "INT - Tiempo de respuesta en ms",
+        "feedback":            "TINYINT(4) MUL - Calificación del colaborador",
+        "feedbackComentario":  "VARCHAR(500)",
+        "feedbackFecha":       "DATETIME",
+        "fechaRegistro":       "DATETIME NOT NULL MUL DEFAULT current_timestamp"
+      },
+      "notas": [
+        "Bot de acompañamiento para nuevos colaboradores",
+        "fase indica la etapa del proceso de onboarding"
+      ]
+    },
+
+    "tblBotWhmcsHistorial": {
+      "desc": "Historial del asistente IA para consultas de clientes WHMCS",
+      "columnas": {
+        "id":                   "INT PK auto_increment",
+        "clienteId":            "INT NOT NULL MUL - FK -> whmcs81a.tblclients.id",
+        "pregunta":             "VARCHAR(500)",
+        "hash_pregunta":        "VARCHAR(64) - SHA256 para caché",
+        "sqlGenerado":          "TEXT - SQL generado por la IA",
+        "respuestaJson":        "MEDIUMTEXT - Respuesta completa en JSON",
+        "tiempoRespMs":         "INT",
+        "tipoRespuesta":        "VARCHAR(30) NOT NULL",
+        "estatus":              "ENUM('Exitoso','Error','NoAutorizado','Guiada') DEFAULT 'Exitoso'",
+        "fechaRegistro":        "DATETIME MUL DEFAULT current_timestamp",
+        "feedback":             "TINYINT(4)",
+        "feedbackComentario":   "VARCHAR(500)",
+        "feedbackFecha":        "DATETIME"
+      },
+      "notas": [
+        "Bot IA para consultas de clientes WHMCS (diferente a tblBotHistorial que es para colaboradores)"
+      ]
+    },
+
+    "whmcs81a.tblLogsVacaciones": {
+      "desc": "Log de auditoría del módulo de vacaciones (en base whmcs81a)",
+      "columnas": {
+        "id":            "INT PK auto_increment",
+        "colaboradorId": "INT NOT NULL - FK -> modulos.tblColaborador.id",
+        "tipoAccion":    "ENUM('Ayuda','Validado') NOT NULL",
+        "fecha":         "DATETIME DEFAULT current_timestamp"
+      },
+      "notas": [
+        "IMPORTANTE: esta tabla está en whmcs81a, no en modulos",
+        "Referencia cruzada a modulos.tblColaborador"
+      ]
+    },
+
+    "whmcs81a.tblclients": {
+      "desc": "Clientes de WHMCS (empresas/personas que contratan servicios Servnet)",
+      "columnas": {
+        "id":          "INT PK auto_increment",
+        "uuid":        "VARCHAR(255) NOT NULL",
+        "firstname":   "TEXT NOT NULL MUL - Nombre del contacto principal",
+        "lastname":    "TEXT NOT NULL",
+        "companyname": "TEXT NOT NULL - Nombre de la empresa",
+        "email":       "TEXT NOT NULL MUL",
+        "address1":    "TEXT",
+        "city":        "TEXT",
+        "state":       "TEXT",
+        "country":     "TEXT",
+        "phonenumber": "TEXT",
+        "status":      "ENUM('Active','Inactive','Closed') NOT NULL MUL DEFAULT 'Active'",
+        "credit":      "DECIMAL(16,2) - Saldo a favor",
+        "datecreated": "DATE",
+        "groupid":     "INT - FK -> tblclientgroups.id",
+        "lastlogin":   "DATETIME MUL"
+      },
+      "notas": [
+        "Los campos sensibles (cardnum, bankacct, bankcode) son BLOB encriptados - no exponer",
+        "companyname es el nombre de la empresa cliente de Servnet"
+      ]
+    },
+
+    "whmcs81a.tblhosting": {
+      "desc": "Servicios/productos contratados por cada cliente WHMCS",
+      "columnas": {
+        "id":                   "INT PK auto_increment",
+        "userid":               "INT NOT NULL MUL - FK -> whmcs81a.tblclients.id",
+        "orderid":              "INT NOT NULL MUL",
+        "packageid":            "INT NOT NULL MUL - FK -> tblproducts.id (tipo de servicio)",
+        "server":               "INT NOT NULL MUL - FK -> tblservers.id",
+        "regdate":              "DATE NOT NULL - Fecha de contratación",
+        "domain":               "TEXT NOT NULL MUL - Dominio o identificador del servicio",
+        "billingcycle":         "TEXT NOT NULL - Ciclo de facturación",
+        "nextduedate":          "DATE - Próxima fecha de vencimiento",
+        "amount":               "DECIMAL(16,2) NOT NULL - Monto recurrente",
+        "domainstatus":         "ENUM('Pending','Active','Suspended','Terminated','Cancelled','Fraud','Completed') NOT NULL MUL",
+        "suspendreason":        "TEXT - Motivo de suspensión",
+        "dedicatedip":          "TEXT - IP dedicada asignada"
+      },
+      "notas": [
+        "domainstatus='Active' son servicios activos facturables",
+        "Tabla central para reportes de servicios contratados por cliente"
+      ]
+    },
+
+    "modulos.tblDireccionColaborador": {
+      "desc": "Dirección domiciliaria de cada colaborador",
+      "columnas": {
+        "id":           "INT - PK",
+        "ColaboradorID":"INT - FK -> tblColaborador.id. ADVERTENCIA: FK con C y D mayusculas",
+        "calle":        "VARCHAR - Calle",
+        "nE":           "VARCHAR - Número exterior",
+        "nI":           "VARCHAR - Número interior",
+        "colonia":      "VARCHAR - Colonia",
+        "ciudad":       "VARCHAR - Ciudad (NO usar para filtrar sede, usar 'ubicacion')",
+        "estado":       "VARCHAR - Estado (NO usar para filtrar sede, usar 'ubicacion')",
+        "cp":           "VARCHAR - Código postal",
+        "pais":         "VARCHAR - País",
+        "ubicacion":    "ENUM('MTY','QRO','CDMX') - Sede de trabajo. USAR ESTE para filtrar por ciudad",
+        "status":       "ENUM('En espera','Rechazada','Validada') - Validación del domicilio"
+      },
+      "notas": [
+        "TRAMPA CRITICA: Para filtrar por ciudad usar 'ubicacion', NO 'ciudad' ni 'estado'",
+        "ubicacion = 'MTY' para Monterrey, 'QRO' para Querétaro, 'CDMX' para Ciudad de México",
+        "NO usar LIKE '%CDMX%' ni LIKE '%Ciudad de México%' — siempre usar ubicacion = 'CDMX'",
+        "FK se llama 'ColaboradorID' con C y D mayúsculas (inconsistente con el resto del sistema)"
+      ]
+    }
+  },
+
+  "reglas_negocio": {
+    "vacaciones": {
+      "desc": "Reglas para cálculo de días de vacaciones por antigüedad",
+      "dias_por_antiguedad": {
+        "0_anios":      { "dias": 0,  "nota": "En su primer año no aplica vacaciones" },
+        "1_anio":       { "dias": 12, "nota": "Del año 1 al 2" },
+        "2_anios":      { "dias": 14, "nota": "Del año 2 al 3" },
+        "3_anios":      { "dias": 16, "nota": "Del año 3 al 4" },
+        "4_anios":      { "dias": 18, "nota": "Del año 4 al 5" },
+        "5_anios":      { "dias": 20, "nota": "Del año 5 al 6" },
+        "6_a_10_anios": { "dias": 22, "nota": "Del año 6 al 10" },
+        "11_a_15_anios":{ "dias": 24, "nota": "Del año 11 al 15" },
+        "16_a_20_anios":{ "dias": 26, "nota": "Del año 16 al 20" },
+        "21_a_25_anios":{ "dias": 28, "nota": "Del año 21 al 25" },
+        "26_a_30_anios":{ "dias": 30, "nota": "Del año 26 al 30" },
+        "31_mas_anios": { "dias": 32, "nota": "31 años en adelante" }
+      },
+      "formula_antiguedad_sql": "TIMESTAMPDIFF(YEAR, fechaIngreso, CURDATE())",
+      "formula_meses_sql":      "TIMESTAMPDIFF(MONTH, fechaIngreso, CURDATE()) % 12",
+      "retencion_periodo_anterior": {
+        "maximo_dias": 5,
+        "nota": "Solo se retienen los días NO usados del período anterior, máximo 5"
+      },
+      "fechas_limite": {
+        "fechaLimiteDA":  "Aniversario + 1 año (para días actuales)",
+        "fechaLimiteDPA": "Aniversario + 6 meses (para días del período anterior, máx 5)"
+      },
+      "calculo_disponible": "diasActuales + MIN(diasPeridoAnterior, 5) - diasPedidos",
+      "proceso": "Cron job mensual actualiza días automáticamente"
+    },
+    "solicitudes": {
+      "estados_validos": ["Pendiente", "Aceptada", "Rechazada", "Cancelada"],
+      "flujo": "Pendiente -> Aceptada|Rechazada -> (Cancelada por solicitante)",
+      "visible_0": "Solicitudes ocultas o especiales",
+      "visible_1": "Solicitudes normales (las que ve el colaborador)"
+    },
+    "colaboradores": {
+      "activo_0": "Colaborador ACTIVO (trabaja actualmente)",
+      "activo_1": "Colaborador INACTIVO (dado de baja)",
+      "filtro_activos_sql": "WHERE activo = 0",
+      "filtro_inactivos_sql": "WHERE activo = 1",
+      "baja_logica": "fechaTermino se llena al dar de baja, NULL mientras activo"
+    }
+  },
+
+  "query_tips": [
+    "Buscar colaborador por nombre: WHERE CONCAT(c.Nombres, ' ', c.Apellidos) LIKE '%texto%'",
+    "Filtrar activos: WHERE c.activo = 0 (NO activo = 1, ese es INACTIVO)",
+    "Obtener area del colaborador: JOIN tblPuesto p ON c.puestoId=p.id JOIN tblAreas a ON p.areaId=a.id",
+    "Filtrar por sede/ciudad: JOIN tblDireccionColaborador d ON d.ColaboradorID=c.id WHERE d.ubicacion='MTY'",
+    "Colaboradores de CDMX: d.ubicacion = 'CDMX' (NO LIKE '%Ciudad%')",
+    "Vacaciones disponibles: diasActuales + LEAST(diasPeridoAnterior, 5) - diasPedidos",
+    "Antigüedad en años: TIMESTAMPDIFF(YEAR, c.fechaIngreso, CURDATE())",
+    "FK de tblDireccionColaborador usa 'ColaboradorID' con mayúsculas (C y D)"
+  ],
+
+  "advertencias_criticas": [
+    "activo=0 es ACTIVO, activo=1 es INACTIVO — columna con lógica invertida en tblColaborador",
+    "tblColaborador NO tiene columna 'eliminado' — no filtrar por ella",
+    "tblColaborador NO tiene columna 'telefono' — usar 'celularServnet'",
+    "tblColaborador NO tiene columna 'areaId' — obtener area via JOIN tblPuesto",
+    "Para filtrar por ciudad usar tblDireccionColaborador.ubicacion (ENUM), NO ciudad/estado",
+    "FK en tblDireccionColaborador se llama 'ColaboradorID' (mayusculas C y D inconsistentes)",
+    "columna 'diasPeridoAnterior' en tblDiasVacaciones tiene typo (Perido no Periodo)",
+    "columna 'diasMaernidad' en tblDiasVacaciones tiene typo (Maernidad no Maternidad)",
+    "columna 'exepcion' en tblSolicitudes tiene typo (un solo c, no doble c)",
+    "tblequiposeguridad usa 'equipoId' como PK en lugar de 'id'",
+    "tblasignacionequiposeg y tblAsignacionGruposDist estan desnormalizadas (sin FK numerica a tblColaborador)",
+    "tblBajaColaborador.fehcaBaja tiene typo grave (fehca en lugar de fecha)",
+    "tblContactosColaborador.nombreContaco tiene typo (falta la t final)",
+    "tblequipoTecnologico.coladoradorId tiene typo critico (doble a en colaborador)",
+    "tblnotificacionColaborador.urgencia ENUM tiene 'ifo' en lugar de 'info'",
+    "tblEquiposComputo es DIFERENTE a tblstockComputo — no confundir: EquiposComputo tiene colaboradorId directo (legacy)",
+    "tblalmacen es inventario de ROPA/UNIFORMES, NO de equipos de computo",
+    "whmcs81a.tblLogsVacaciones esta en la BD whmcs81a aunque referencia colaboradores de modulos",
+    "tblvisitas.client_id apunta a whmcs81a.tblclients, NO a tblColaborador"
+  ]
+}

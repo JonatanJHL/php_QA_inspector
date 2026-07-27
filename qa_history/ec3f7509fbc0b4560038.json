@@ -1,0 +1,11 @@
+{
+  "filepath": "C:\\Users\\jonat\\OneDrive\\Escritorio\\backup\\capa8\\prod\\SistemaColaboradores\\dashboard_kpis.php",
+  "entries": [
+    {
+      "timestamp": "2026-07-22T10:38:41",
+      "model": "hermes3:latest",
+      "code_hash": "66f72a9e4fcf",
+      "summary": "Here's the PHP code to generate the necessary data for the charts:\n\n```php\n<?php\n// Suponiendo que tienes los datos de las consultas en variables o arrays\n// Aquí se supone que $datosAltas es un array asociativo con áreas como claves y altas como valores\n$labelsAltasPorArea = array_keys($datosAltas);\n$valuesAltasPorArea = array_values(array_map(function ($v) {\n    return [$v];\n}, $datosAltas));\n\n// Aquí se supone que $datosBajas es un array asociativo con áreas como claves y bajas como valores\n$labelsBajasPorArea = array_keys($datosBajas);\n$valuesBajasPorArea = array_values(array_map(function ($v) {\n    return [$v];\n}, $datosBajas));\n\n// Devuelve los datos necesarios para el JavaScript\nheader('Content-Type: application/json');\necho json_encode([\n    'altas' => [\n        'labels'  => $labelsAltasPorArea,\n        'values'  => $valuesAltasPorArea,\n    ],\n    'bajas' => [\n        'labels'  => $labelsBajasPorArea,\n        'values'  => $valuesBajasPorArea,\n    ]\n]);\n?>\n```\n\nThis PHP code assumes you have the data for the queries stored in variables or arrays. It processes the data to format it correctly for the JavaScript charts.\n\nThe `header('Content-Type: application/json');` line specifies that the output should be treated as JSON data.\n\nThen, it echoes a JSON-encoded array containing the labels and values for both the altas and bajas datasets. The labels correspond to the area names, and the values are arrays of the count numbers for each area.\n\nMake sure to replace `$datosAltas` and `$datosBajas` with your actual data sources (e.g., database queries or file reads).\n\nTo use this PHP code in your existing HTML/JavaScript setup:\n\n1. Save it as a separate PHP file (e.g., `generateChartData.php`) in the same directory as your main HTML file.\n\n2. In your main HTML file, replace the placeholders for `$labelsAltasPorArea` and `$valuesAltasPorArea` with calls to this PHP script using AJAX. Similarly, do the same for `$labelsBajasPorArea` and `$valuesBajasPorArea`.\n\n3. Ensure "
+    }
+  ]
+}

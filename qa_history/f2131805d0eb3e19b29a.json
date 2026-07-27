@@ -1,0 +1,11 @@
+{
+  "filepath": "C:\\Users\\jonat\\OneDrive\\Escritorio\\backup\\capa8\\prod\\SistemaColaboradores\\encabezado.php",
+  "entries": [
+    {
+      "timestamp": "2026-07-23T17:31:56",
+      "model": "qwen2.5-coder:7b",
+      "code_hash": "5d797dbc8128",
+      "summary": "_Archivo grande detectado (67319 caracteres). Analizando en 12 bloque(s) por separado para no saturar el contexto del modelo local..._\n\n---\n\n**[Bloque 1/12] Analizando: `nivel superior (líneas 1-9)`...**\n\n__HB__:Analizando bloque... (4s transcurridos)\n__HB__:Analizando bloque... (8s transcurridos)\n__HB__:Analizando bloque... (12s transcurridos)\n__HB__:Analizando bloque... (16s transcurridos)\n__HB__:Analizando bloque... (20s transcurridos)\n__HB__:Analizando bloque... (24s transcurridos)\n__HB__:Analizando bloque... (28s transcurridos)\n__HB__:Analizando bloque... (32s transcurridos)\n__HB__:Analizando bloque... (36s transcurridos)\n__HB__:Analizando bloque... (40s transcurridos)\n__HB__:Analizando bloque... (44s transcurridos)\n__HB__:Analizando bloque... (48s transcurridos)\n__HB__:Analizando bloque... (52s transcurridos)\n__HB__:Analizando bloque... (56s transcurridos)\n__HB__:Analizando bloque... (60s transcurridos)\n__HB__:Analizando bloque... (64s transcurridos)\n__HB__:Analizando bloque... (68s transcurridos)\n__HB__:Analizando bloque... (72s transcurridos)\n__HB__:Analizando bloque... (76s transcurridos)\n__HB__:Analizando bloque... (80s transcurridos)\n__HB__:Analizando bloque... (84s transcurridos)\n__HB__:Analizando bloque... (88s transcurridos)\n__HB__:Analizando bloque... (92s transcurridos)\n__HB__:Analizando bloque... (96s transcurridos)\n__HB__:Analizando bloque... (100s transcurridos)\n__HB__:Analizando bloque... (104s transcurridos)\n__HB__:Analizando bloque... (108s transcurridos)\n1. Este bloque inicia una sesión de PHP y carga una clase para interactuar con una base de datos MySQL.\n2. Variables clave: `$dao2` (instancia de la clase `PHP_DBC_MODULOS`).\n3. Riesgos o casos que romperían la ejecución:\n   - Falta de conexión a la base de datos (`$dao2->link`) si no se pudo establecer una conexión.\n   - Error en la inclusión del archivo de la clase (`include_once`).\n4. Diagrama Mermaid:\n\n```mermaid\ngraph TD;\n    TOP_A[Inicio] --> TOP_B[session_start()]\n    TOP_B --> TOP_C[in"
+    }
+  ]
+}
