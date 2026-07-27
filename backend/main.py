@@ -87,14 +87,25 @@ def list_files():
 
 @app.post("/api/file/content")
 def get_file_content(req: FileContentRequest):
-    # Security check: Ensure file is inside the configured directory
+    # Security check: ensure the file is genuinely contained within
+    # settings.php_dir using os.path.commonpath (not the previous startswith
+    # on a raw string, which a sibling directory sharing a name prefix could
+    # pass incorrectly — e.g. "...SistemaColaboradores" vs
+    # "...SistemaColaboradoresBACKUP"). Also removes the old blanket
+    # exception that allowed reading ANY file under the user's whole Desktop
+    # folder regardless of php_dir — that was far broader than intended and,
+    # combined with this endpoint having no authentication, a real
+    # information-disclosure risk (confirmed real: this project has been
+    # exposed via ngrok before, see qa_inspect.sh).
     real_target = os.path.realpath(req.filepath)
     real_base = os.path.realpath(settings.php_dir)
-    
-    # We allow loading if it is in the backup directory or workspace for convenience,
-    # but let's log or check it.
-    if not real_target.startswith(real_base) and not req.filepath.startswith("c:\\Users\\jonat\\OneDrive\\Escritorio"):
-         raise HTTPException(status_code=403, detail="Acceso denegado: El archivo está fuera de las rutas permitidas.")
+    try:
+        contained = os.path.commonpath([real_target, real_base]) == real_base
+    except ValueError:
+        # e.g. different drives on Windows
+        contained = False
+    if not contained:
+        raise HTTPException(status_code=403, detail="Acceso denegado: el archivo está fuera del directorio configurado.")
 
     if not os.path.exists(req.filepath):
         raise HTTPException(status_code=404, detail="El archivo no existe.")
