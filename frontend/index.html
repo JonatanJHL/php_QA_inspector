@@ -114,6 +114,10 @@
               <i class="fa-solid fa-chart-line"></i> Impacto y Riesgo
               <span id="impact-badge" class="tab-badge dot"></span>
             </button>
+            <button class="tab-btn" data-tab="tab-agent">
+              <i class="fa-solid fa-robot"></i> Agente (Ollama/NVIDIA)
+              <span id="agent-badge" class="tab-badge dot"></span>
+            </button>
           </div>
         </div>
 
@@ -186,6 +190,41 @@
                   <p>El diagrama de flujo se genera junto con la simulación de agente, arriba.</p>
                 </div>
                 <div id="flow-diagram-container" class="mermaid-container hidden"></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Tool-Calling Agent Panel (Ollama / NVIDIA) -->
+          <div id="tab-agent" class="tab-panel card">
+            <div class="panel-header-actions">
+              <span>
+                Agente con Herramientas
+                <span id="agent-timer" class="desktop-timer hidden"></span>
+              </span>
+              <div class="agent-controls">
+                <select id="agent-provider-select" title="Proveedor del modelo">
+                  <option value="ollama">Ollama (local)</option>
+                  <option value="nvidia">NVIDIA (nube)</option>
+                </select>
+                <input type="text" id="agent-model-input" placeholder="Nombre del modelo" title="ej. qwen2.5-coder:7b o meta/llama-3.1-8b-instruct">
+                <button id="btn-run-agent" class="btn btn-sm btn-secondary">Analizar con Agente</button>
+              </div>
+            </div>
+            <div class="desktop-test-container">
+              <div id="agent-loading" class="agent-loading hidden">
+                <div class="spinner-container">
+                  <i class="fa-solid fa-circle-notch fa-spin"></i>
+                  <p>El agente está investigando el archivo con herramientas (leer funciones, verificar sintaxis, etc.)...</p>
+                  <p class="subtitle">A diferencia de la Prueba de Escritorio, aquí el modelo decide qué información pedir — puede tomar varios turnos.</p>
+                </div>
+              </div>
+              <div id="agent-gate-banner" class="gate-banner hidden"></div>
+              <div id="agent-result" class="markdown-body">
+                <div class="empty-state">
+                  <i class="fa-solid fa-robot"></i>
+                  <h3>Agente con Herramientas</h3>
+                  <p>Elige un proveedor (Ollama local o NVIDIA en la nube) y el nombre exacto del modelo, luego inicia el análisis.</p>
+                </div>
               </div>
             </div>
           </div>

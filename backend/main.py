@@ -16,6 +16,7 @@ from qa_history import save_desktop_test_result
 from dependency_graph import build_dependency_graph, get_impact_set, get_table_impact
 from agent_loop import run_agent_analysis
 from desktop_test import run_desktop_test_stream
+from multi_agent import run_multi_file_analysis
 
 app = FastAPI(title="PHP QA Orchestrator API")
 
@@ -32,6 +33,8 @@ app.add_middleware(
 class ConfigUpdateRequest(BaseModel):
     php_dir: str
     ollama_url: str
+    llm_provider: Optional[str] = None
+    nvidia_model: Optional[str] = None
 
 class FileContentRequest(BaseModel):
     filepath: str
@@ -39,6 +42,12 @@ class FileContentRequest(BaseModel):
 class DesktopTestRequest(BaseModel):
     filepath: str
     model: str
+    provider: str = "ollama"  # "ollama" | "nvidia" — solo lo usa /api/qa/agent-test
+
+class MultiAgentTestRequest(BaseModel):
+    filepaths: list[str]
+    model: str
+    provider: str = "nvidia"
 
 # Endpoints
 @app.get("/api/config")
@@ -48,7 +57,11 @@ def get_config():
         "ollama_url": settings.ollama_url,
         "default_model": settings.default_model,
         "exists": os.path.exists(settings.php_dir),
-        "local_ip": get_local_ip()
+        "local_ip": get_local_ip(),
+        "llm_provider": settings.llm_provider,
+        "nvidia_model": settings.nvidia_model,
+        # Solo un booleano — nunca la key en si.
+        "nvidia_api_key_configured": bool(os.environ.get("NVIDIA_API_KEY"))
     }
 
 @app.post("/api/config")
@@ -57,6 +70,10 @@ def update_config(req: ConfigUpdateRequest):
         raise HTTPException(status_code=400, detail=f"El directorio especificado no existe en el sistema local: {req.php_dir}")
     settings.php_dir = req.php_dir
     settings.ollama_url = req.ollama_url
+    if req.llm_provider is not None:
+        settings.llm_provider = req.llm_provider
+    if req.nvidia_model is not None:
+        settings.nvidia_model = req.nvidia_model
     return {"status": "success", "config": get_config()}
 
 @app.get("/api/files")
@@ -342,7 +359,7 @@ async def run_agent_test(req: DesktopTestRequest):
     async def event_generator():
         accumulated = []
         try:
-            async for chunk in run_agent_analysis(req.filepath, req.model):
+            async for chunk in run_agent_analysis(req.filepath, req.model, provider=req.provider):
                 accumulated.append(chunk)
                 yield chunk
             full_text = "".join(accumulated)
@@ -350,6 +367,27 @@ async def run_agent_test(req: DesktopTestRequest):
                 save_desktop_test_result(req.filepath, req.model, code, full_text)
         except Exception as e:
             yield f"Error inesperado durante el análisis del agente: {str(e)}"
+
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+@app.post("/api/qa/multi-agent-test")
+async def run_multi_agent_test(req: MultiAgentTestRequest):
+    """Orquestador multi-agente real (ver multi_agent.py): varios archivos
+    analizados EN PARALELO + un agente coordinador que sintetiza el impacto
+    cruzado entre ellos. Solo tiene sentido de verdad con provider="nvidia"
+    (concurrencia real); con Ollama local, los agentes se siguen sirviendo
+    uno a la vez de todos modos. Mismo protocolo __HB__/__GATE__."""
+    missing = [fp for fp in req.filepaths if not os.path.exists(fp)]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Archivo(s) no encontrado(s): {', '.join(missing)}")
+
+    async def event_generator():
+        try:
+            async for chunk in run_multi_file_analysis(req.filepaths, req.model, provider=req.provider):
+                yield chunk
+        except Exception as e:
+            yield f"Error inesperado durante el análisis multi-agente: {str(e)}"
 
     return StreamingResponse(event_generator(), media_type="text/plain")
 

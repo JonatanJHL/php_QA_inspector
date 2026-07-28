@@ -3,3 +3,14 @@ __pycache__/
 *.pyc
 *.pyo
 .DS_Store
+.env
+.env.*
+
+# Historial de análisis (contiene rutas locales y detalles del código
+# analizado) y schema real de base de datos (contiene nombres de tablas y
+# columnas reales del sistema) — ninguno de los dos debe subirse al repo,
+# ver README para cómo generarlos localmente.
+qa_history/*.json
+backend/knowledge/db_schema.json
+!qa_history/.gitkeep
+!backend/knowledge/.gitkeep

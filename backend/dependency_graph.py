@@ -45,9 +45,17 @@ def build_dependency_graph(php_dir: str):
         r'(?:include|require)(?:_once)?\s*\(?\s*__DIR__\s*\.\s*[\'"]([^\'"]+)[\'"]\s*\)?',
         re.IGNORECASE
     )
-    # schema.table references, e.g. modulos.tblColaborador, whmcs81a.tblhosting
+    # Referencias a tablas, con o sin prefijo de schema (modulos.tblXxx,
+    # whmcs81a.tblXxx, o solo tblXxx a secas — confirmado con datos reales que
+    # la mayoría del código de este proyecto referencia las tablas SIN
+    # prefijo, y antes de este fix solo se detectaba la forma con prefijo, lo
+    # que dejaba file_tables vacío para la mayoría de los archivos reales).
+    # Se captura siempre el nombre de tabla en su forma sin prefijo (bare),
+    # para que dos archivos que referencien la misma tabla — uno con prefijo
+    # y otro sin — sigan cayendo bajo la misma llave y se detecten como
+    # relacionados.
     table_ref_pattern = re.compile(
-        r'\b(modulos|whmcs81a)\.(tbl[A-Za-z0-9_]+)\b'
+        r'\b(?:(?:modulos|whmcs81a)\.)?(tbl[A-Za-z0-9_]+)\b'
     )
 
     ambiguous_basenames = set()
@@ -60,7 +68,7 @@ def build_dependency_graph(php_dir: str):
                 content = f.read()
 
             # --- table references (any file type we scan, not just includes) ---
-            tables_found = {f"{m.group(1)}.{m.group(2)}" for m in table_ref_pattern.finditer(content)}
+            tables_found = {m.group(1) for m in table_ref_pattern.finditer(content)}
             if tables_found:
                 file_tables[filepath] = tables_found
 
@@ -140,6 +148,12 @@ def get_table_impact(filepath: str, file_tables: dict):
 
     Returns: (tables_used_by_this_file, {table: [other_file, ...]})
     """
+    # file_tables está indexado con las rutas nativas que devuelve os.walk
+    # (os.path.join, separador de la plataforma). `filepath` puede llegar con
+    # otro estilo de separador (ej. barras normales desde una API request) —
+    # sin normalizar, el lookup fallaba en silencio y devolvía "sin tablas
+    # compartidas" incluso cuando sí las había (confirmado con datos reales).
+    filepath = os.path.normpath(filepath)
     my_tables = file_tables.get(filepath, set())
     if not my_tables:
         return set(), {}

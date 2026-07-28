@@ -50,6 +50,16 @@ const gateBanner = document.getElementById('gate-banner');
 const flowDiagramEmpty = document.getElementById('flow-diagram-empty');
 const flowDiagramContainer = document.getElementById('flow-diagram-container');
 
+// Tool-Calling Agent Tab (Ollama/NVIDIA)
+const btnRunAgent = document.getElementById('btn-run-agent');
+const agentProviderSelect = document.getElementById('agent-provider-select');
+const agentModelInput = document.getElementById('agent-model-input');
+const agentLoading = document.getElementById('agent-loading');
+const agentResult = document.getElementById('agent-result');
+const agentBadge = document.getElementById('agent-badge');
+const agentTimer = document.getElementById('agent-timer');
+const agentGateBanner = document.getElementById('agent-gate-banner');
+
 // Impact Tab DOM Elements
 const btnRunImpact = document.getElementById('btn-run-impact');
 const impactBadge = document.getElementById('impact-badge');
@@ -101,6 +111,7 @@ document.addEventListener('DOMContentLoaded', async () => {
   
   btnRunSyntax.addEventListener('click', () => runSyntaxCheck(true));
   btnRunDesktop.addEventListener('click', runDesktopTest);
+  btnRunAgent.addEventListener('click', runAgentTest);
   btnRunImpact.addEventListener('click', runImpactAnalysis);
   btnRunAll.addEventListener('click', runFullOrchestratedQA);
 });
@@ -487,6 +498,141 @@ function stopDesktopTimer() {
   }
 }
 
+// Same timer pattern as Desktop Test, kept separate (not shared) so running
+// one tab's analysis never fights the other's timer/DOM elements.
+let _agentTimerInterval = null;
+let _agentStartTime = null;
+let _agentHeartbeatLabel = '';
+
+function startAgentTimer() {
+  _agentStartTime = Date.now();
+  _agentHeartbeatLabel = '';
+  agentTimer.classList.remove('hidden');
+  updateAgentTimerDisplay();
+  _agentTimerInterval = setInterval(updateAgentTimerDisplay, 1000);
+}
+
+function updateAgentTimerDisplay() {
+  const elapsed = Math.floor((Date.now() - _agentStartTime) / 1000);
+  const mins = Math.floor(elapsed / 60);
+  const secs = elapsed % 60;
+  const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
+  agentTimer.textContent = _agentHeartbeatLabel ? `${_agentHeartbeatLabel} · ${timeStr}` : timeStr;
+}
+
+function stopAgentTimer() {
+  if (_agentTimerInterval) {
+    clearInterval(_agentTimerInterval);
+    _agentTimerInterval = null;
+  }
+}
+
+async function runAgentTest() {
+  if (!selectedFile) return;
+
+  const provider = agentProviderSelect.value;
+  const model = agentModelInput.value.trim() || (provider === 'nvidia' ? 'meta/llama-3.1-8b-instruct' : modelSelect.value);
+  agentBadge.className = 'tab-badge dot running';
+  agentLoading.classList.remove('hidden');
+  agentResult.classList.add('hidden');
+  agentResult.innerHTML = '';
+  agentGateBanner.classList.add('hidden');
+  agentGateBanner.innerHTML = '';
+  startAgentTimer();
+
+  try {
+    const response = await fetch(`${BACKEND_URL}/api/qa/agent-test`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ filepath: selectedFile.full_path, model: model, provider: provider })
+    });
+
+    if (!response.ok) {
+      const err = await response.json();
+      throw new Error(err.detail || 'Ocurrió un error al iniciar el agente.');
+    }
+
+    agentLoading.classList.add('hidden');
+    agentResult.classList.remove('hidden');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let accumulatedText = '';
+    let streamBuffer = '';
+    let analysisComplete = false;
+    let gateData = null;
+
+    // Mismo protocolo __HB__/__GATE__ que Desktop Test — ver processBufferedLines
+    // en runDesktopTest para la explicación completa de por qué se filtran así.
+    function processAgentBufferedLines(buffer, isFinal) {
+      const lines = buffer.split('\n');
+      const complete = isFinal ? lines : lines.slice(0, -1);
+      const remainder = isFinal ? '' : lines[lines.length - 1];
+
+      for (const line of complete) {
+        if (line.startsWith('__HB__:')) {
+          _agentHeartbeatLabel = line.slice('__HB__:'.length).replace(/\s*\(\d+s transcurridos\)\s*$/, '').trim();
+          updateAgentTimerDisplay();
+        } else if (line.startsWith('__GATE__:')) {
+          try {
+            gateData = JSON.parse(line.slice('__GATE__:'.length));
+          } catch (e) {
+            console.error('No se pudo parsear el veredicto del gate:', e);
+          }
+        } else {
+          accumulatedText += line + '\n';
+        }
+      }
+      return remainder;
+    }
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) {
+        streamBuffer = processAgentBufferedLines(streamBuffer, true);
+        break;
+      }
+
+      const chunk = decoder.decode(value, { stream: true });
+      streamBuffer += chunk;
+      streamBuffer = processAgentBufferedLines(streamBuffer, false);
+
+      if (accumulatedText.includes('✅ **Análisis completo.**')) {
+        analysisComplete = true;
+      }
+
+      if (window.marked) {
+        agentResult.innerHTML = marked.parse(accumulatedText);
+      } else {
+        agentResult.innerHTML = `<pre style="white-space: pre-wrap; font-family: inherit;">${accumulatedText}</pre>`;
+      }
+    }
+
+    if (accumulatedText.includes('✅ **Análisis completo.**')) {
+      analysisComplete = true;
+    }
+
+    stopAgentTimer();
+    agentBadge.className = analysisComplete ? 'tab-badge dot success' : 'tab-badge dot error';
+
+    if (gateData) {
+      renderGateBanner(gateData, agentGateBanner);
+    }
+  } catch (error) {
+    stopAgentTimer();
+    agentLoading.classList.add('hidden');
+    agentResult.classList.remove('hidden');
+    agentResult.innerHTML = `
+      <div class="empty-state text-danger">
+        <i class="fa-solid fa-triangle-exclamation"></i>
+        <h3>Error en el Agente</h3>
+        <p>${error.message}</p>
+      </div>
+    `;
+    agentBadge.className = 'tab-badge dot error';
+  }
+}
+
 async function runDesktopTest() {
   if (!selectedFile) return;
   
@@ -615,9 +761,10 @@ async function runDesktopTest() {
 // currently informational only — no action button is gated by it yet — but
 // gives an unambiguous, non-skippable visual signal instead of relying on
 // someone reading the whole table and judging severity themselves.
-function renderGateBanner(gate) {
-  gateBanner.classList.remove('hidden');
-  gateBanner.className = `gate-banner gate-${gate.gate_status}`;
+function renderGateBanner(gate, targetEl) {
+  const el = targetEl || gateBanner;
+  el.classList.remove('hidden');
+  el.className = `gate-banner gate-${gate.gate_status}`;
 
   let icon, title;
   if (gate.gate_status === 'bloqueado') {
@@ -653,7 +800,7 @@ function renderGateBanner(gate) {
     html += `<div style="margin-top: 6px; opacity: 0.75;">No se encontró una Matriz de Casos de Prueba en la respuesta del modelo — este veredicto no pudo evaluarse.</div>`;
   }
 
-  gateBanner.innerHTML = html;
+  el.innerHTML = html;
 }
 
 // Extract a ```mermaid ... ``` block from the agent's markdown response and
