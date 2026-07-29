@@ -342,6 +342,76 @@ def _dispatch_tool(name: str, args: dict) -> dict:
         return {"error": f"Error ejecutando '{name}': {e}"}
 
 
+async def _generate_flow_diagram_section(filepath: str, model_name: str, provider: str):
+    """Segunda llamada corta y dedicada SOLO a producir un diagrama de flujo
+    Mermaid — pedirlo junto con el veredicto principal (que ya tiene 3
+    secciones y una matriz de casos) es menos confiable: incluso modelos
+    grandes tienden a saltarse instrucciones al final de un prompt largo.
+    Un prompt corto de un solo propósito da sintaxis Mermaid válida con
+    mucha más consistencia (mismo enfoque que usaba el pipeline fijo
+    anterior en desktop_test.py). Es un generador async: puede yield
+    heartbeats mientras espera, y al final el bloque de texto del diagrama
+    (o nada, si la llamada falla o el archivo no se pudo releer — el
+    diagrama es un extra, nunca debe tumbar el veredicto principal que el
+    usuario ya recibió)."""
+    try:
+        real_path = _ensure_within_php_dir(filepath)
+        with open(real_path, "r", encoding="utf-8", errors="replace") as f:
+            code_str = f.read()
+    except Exception:
+        return
+
+    ext = (os.path.splitext(filepath)[1] or ".php").lstrip(".")
+    diagram_prompt = (
+        "Genera ÚNICAMENTE un diagrama de flujo en formato Mermaid (`flowchart TD`) que represente "
+        "el flujo principal del siguiente código. No agregues explicación, resumen, ni texto fuera "
+        "del bloque de código. Solo el bloque ```mermaid ... ```.\n\n"
+        "Reglas del diagrama:\n"
+        "- IDs de nodo cortos (A, B, C...), texto breve dentro de cada nodo (máximo 6 palabras).\n"
+        "- Incluye puntos de entrada, decisiones condicionales (nodos de rombo), accesos a base de "
+        "datos/servicios externos, y puntos de salida.\n"
+        "- Si detectas un punto que claramente rompería la ejecución (excepción no capturada, "
+        "división por cero, acceso a índice inexistente, etc.), márcalo con la clase `errorNode`: "
+        "`classDef errorNode fill:#7f1d1d,stroke:#ef4444,color:#fff;`\n\n"
+        f"Código ({ext}):\n```{ext}\n{code_str}\n```"
+    )
+
+    result = None
+    try:
+        async for item in call_llm_chat(
+            [{"role": "user", "content": diagram_prompt}], model_name, "Diagrama de flujo",
+            provider=provider, timeout=180.0
+        ):
+            if isinstance(item, dict):
+                result = item
+            else:
+                yield item
+    except Exception:
+        return
+
+    if not (result and result.get("message")):
+        return
+    content = result["message"].get("content") or ""
+    match = re.search(r'```mermaid\s*\n?([\s\S]*?)```', content)
+    if match:
+        yield "\n\n### 🗺️ Diagrama de Flujo\n```mermaid\n" + match.group(1).strip() + "\n```\n"
+
+
+async def _finalize_analysis(final_text: str, filepath: str, model_name: str, provider: str):
+    """Cola común a ambas salidas de run_agent_analysis (respuesta final
+    normal, o veredicto forzado tras agotar los turnos): yield el texto
+    final, agrega el diagrama de flujo, y cierra con el gate + marcador de
+    completado. El gate se calcula sobre `final_text` SIN el diagrama para
+    no confundir al parser de la matriz de casos con contenido Mermaid."""
+    yield final_text + "\n\n"
+    matrix_rows = parse_test_matrix(final_text)
+    gate = classify_severity(matrix_rows)
+    async for item in _generate_flow_diagram_section(filepath, model_name, provider):
+        yield item
+    yield f"\n\n__GATE__:{json.dumps(gate, ensure_ascii=False)}\n"
+    yield "\n\n✅ **Análisis completo.**\n"
+
+
 def _build_system_prompt(filepath: str) -> str:
     return (
         f"Eres un Agente de QA para PHP. Tu tarea es analizar el archivo `{filepath}` y producir un "
@@ -455,11 +525,8 @@ async def run_agent_analysis(filepath: str, model_name: str, provider: str = "ol
             # Sin más llamadas a herramientas y ya se cumplió el mínimo (o se
             # acabaron los turnos): esta es la respuesta final.
             final_text = message.get("content") or ""
-            yield final_text + "\n\n"
-            matrix_rows = parse_test_matrix(final_text)
-            gate = classify_severity(matrix_rows)
-            yield f"\n\n__GATE__:{json.dumps(gate, ensure_ascii=False)}\n"
-            yield "\n\n✅ **Análisis completo.**\n"
+            async for item in _finalize_analysis(final_text, filepath, model_name, provider):
+                yield item
             return
 
         # El modelo a veces piensa en voz alta además de pedir herramientas —
@@ -520,11 +587,8 @@ async def run_agent_analysis(filepath: str, model_name: str, provider: str = "ol
     final_text = ""
     if result and result.get("message"):
         final_text = result["message"].get("content") or ""
-        yield final_text + "\n\n"
     elif result and result.get("error"):
         yield f"\n\n❌ No se pudo obtener veredicto final: {result['error']}\n"
 
-    matrix_rows = parse_test_matrix(final_text)
-    gate = classify_severity(matrix_rows)
-    yield f"\n\n__GATE__:{json.dumps(gate, ensure_ascii=False)}\n"
-    yield "\n\n✅ **Análisis completo.**\n"
+    async for item in _finalize_analysis(final_text, filepath, model_name, provider):
+        yield item

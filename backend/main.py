@@ -3,10 +3,10 @@ import re
 import subprocess
 import json
 import httpx
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 
@@ -28,6 +28,29 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Autenticación por API key — OPCIONAL, solo se exige si QA_API_KEY
+    está configurada como variable de entorno (mismo patrón que
+    NVIDIA_API_KEY: nunca en Settings/config, nunca expuesta por ningún
+    endpoint, nunca escrita a disco por este proyecto). Sin la variable
+    configurada, el comportamiento es el de siempre — sin auth, pensado
+    para uso puramente local. Se exige solo en rutas /api/ (el frontend
+    estático no la necesita para poder cargar la página).
+
+    Esto importa en cuanto este servidor deja de ser solo-localhost — este
+    proyecto ya se expuso una vez por ngrok sin ninguna autenticación (ver
+    qa_inspect.sh), lo cual es un riesgo real de fuga de código fuente dado
+    que cualquiera con la URL puede leer cualquier archivo bajo el
+    directorio PHP configurado."""
+    required_key = os.environ.get("QA_API_KEY")
+    if required_key and request.url.path.startswith("/api/"):
+        provided = request.headers.get("X-API-Key")
+        if provided != required_key:
+            return JSONResponse(status_code=401, content={"detail": "API key inválida o faltante (header X-API-Key)."})
+    return await call_next(request)
 
 # Pydantic schemas for requests
 class ConfigUpdateRequest(BaseModel):

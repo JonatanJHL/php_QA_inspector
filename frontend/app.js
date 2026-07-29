@@ -7,12 +7,25 @@ let currentFiles = [];
 let selectedFile = null;
 let currentConfig = null;
 
+// Modelos ya probados y confirmados como confiables para cada proveedor —
+// dropdown en vez de texto libre para no arriesgar un nombre de modelo
+// mal escrito o inexistente.
+const MODEL_PRESETS = {
+  ollama: [
+    { value: 'hermes3:latest', label: 'hermes3:latest (recomendado)' },
+    { value: 'qwen2.5-coder:7b', label: 'qwen2.5-coder:7b' },
+  ],
+  nvidia: [
+    { value: 'nvidia/llama-3.3-nemotron-super-49b-v1.5', label: 'Nemotron 49B (recomendado — probado y confiable)' },
+    { value: 'meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B (más rápido, menos confiable)' },
+    { value: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B (lento en el tier gratuito)' },
+  ],
+};
+
 // DOM Elements
 const phpDirInput = document.getElementById('php-dir-input');
 const saveConfigBtn = document.getElementById('save-config-btn');
 const ollamaUrlInput = document.getElementById('ollama-url-input');
-const modelSelect = document.getElementById('model-select');
-const refreshModelsBtn = document.getElementById('refresh-models-btn');
 const configStatus = document.getElementById('config-status');
 const shareUrlContainer = document.getElementById('share-url-container');
 
@@ -39,22 +52,13 @@ const syntaxResultDesc = document.getElementById('syntax-result-desc');
 const syntaxConsole = document.getElementById('syntax-console');
 const syntaxBadge = document.getElementById('syntax-badge');
 
-// Desktop Test Tab
-const btnRunDesktop = document.getElementById('btn-run-desktop');
-const agentActiveModel = document.getElementById('agent-active-model');
-const desktopLoading = document.getElementById('desktop-loading');
-const desktopResult = document.getElementById('desktop-result');
-const desktopBadge = document.getElementById('desktop-badge');
-const desktopTimer = document.getElementById('desktop-timer');
-const gateBanner = document.getElementById('gate-banner');
-const flowDiagramEmpty = document.getElementById('flow-diagram-empty');
-const flowDiagramContainer = document.getElementById('flow-diagram-container');
-
-// Tool-Calling Agent Tab (Ollama/NVIDIA)
+// Tool-Calling Agent Tab (Ollama/NVIDIA) — único flujo de análisis, corre
+// un archivo o el orquestador multi-agente según lo que esté marcado.
 const btnRunAgent = document.getElementById('btn-run-agent');
 const agentProviderSelect = document.getElementById('agent-provider-select');
-const agentModelInput = document.getElementById('agent-model-input');
+const agentModelSelect = document.getElementById('agent-model-select');
 const agentLoading = document.getElementById('agent-loading');
+const agentLoadingText = document.getElementById('agent-loading-text');
 const agentResult = document.getElementById('agent-result');
 const agentBadge = document.getElementById('agent-badge');
 const agentTimer = document.getElementById('agent-timer');
@@ -79,13 +83,13 @@ const impactSetList = document.getElementById('impact-set-list');
 // Initialize App
 document.addEventListener('DOMContentLoaded', async () => {
   setupTabs();
+  populateModelSelect();
   await loadConfig();
-  await loadModels();
   await loadFiles();
 
-  // Mermaid theme tuned to match the app's dark glassmorphism palette.
-  // Uses fixed hex values (not CSS vars) because Mermaid reads this config
-  // once at init time and doesn't re-resolve CSS custom properties per render.
+  // Mermaid theme tuned to match the app's dark glassmorphism palette. Uses
+  // fixed hex values (not CSS vars) because Mermaid reads this config once
+  // at init time and doesn't re-resolve CSS custom properties per render.
   if (typeof mermaid !== 'undefined') {
     mermaid.initialize({
       startOnLoad: false,
@@ -102,19 +106,24 @@ document.addEventListener('DOMContentLoaded', async () => {
       securityLevel: 'strict'
     });
   }
-  
+
   // Event Listeners
   saveConfigBtn.addEventListener('click', saveConfig);
-  refreshModelsBtn.addEventListener('click', loadModels);
   fileSearch.addEventListener('input', filterFiles);
   copyCodeBtn.addEventListener('click', copyCodeToClipboard);
-  
+
   btnRunSyntax.addEventListener('click', () => runSyntaxCheck(true));
-  btnRunDesktop.addEventListener('click', runDesktopTest);
+  agentProviderSelect.addEventListener('change', populateModelSelect);
   btnRunAgent.addEventListener('click', runAgentTest);
   btnRunImpact.addEventListener('click', runImpactAnalysis);
   btnRunAll.addEventListener('click', runFullOrchestratedQA);
 });
+
+// Llena el dropdown de modelo con los presets del proveedor seleccionado.
+function populateModelSelect() {
+  const presets = MODEL_PRESETS[agentProviderSelect.value] || [];
+  agentModelSelect.innerHTML = presets.map(p => `<option value="${p.value}">${p.label}</option>`).join('');
+}
 
 // Setup Tabs Logic
 function setupTabs() {
@@ -186,8 +195,6 @@ async function saveConfig() {
     shareUrlContainer.classList.remove('hidden');
     shareUrlContainer.innerHTML = `<i class="fa-solid fa-share-nodes"></i> Compartir en red: <strong>http://${currentConfig.local_ip}:8000</strong>`;
     
-    // Reload everything
-    await loadModels();
     await loadFiles();
   } catch (error) {
     showConfigStatus(error.message, 'error');
@@ -199,50 +206,6 @@ function showConfigStatus(msg, type) {
   configStatus.textContent = msg;
   configStatus.className = 'status-msg';
   if (type) configStatus.classList.add(type);
-}
-
-// Load Models list from local Ollama
-async function loadModels() {
-  try {
-    modelSelect.innerHTML = '<option>Cargando modelos...</option>';
-    const response = await fetch(`${BACKEND_URL}/api/ollama/models`);
-    if (!response.ok) throw new Error('Error de servidor.');
-    
-    const data = await response.json();
-    modelSelect.innerHTML = '';
-    
-    if (data.models && data.models.length > 0) {
-      data.models.forEach(model => {
-        const option = document.createElement('option');
-        option.value = model;
-        option.textContent = model;
-        // Prioritize hermes3 or select the default one
-        if (model.includes('hermes3') || model.includes('hermes')) {
-          option.selected = true;
-        }
-        modelSelect.appendChild(option);
-      });
-      showConfigStatus('Modelos de Ollama sincronizados.', 'success');
-    } else {
-      modelSelect.innerHTML = '<option value="hermes3:latest">hermes3:latest (Default)</option>';
-      const warning = data.warning || 'No se encontraron modelos. ¿Ollama está encendido?';
-      showConfigStatus(warning, 'error');
-    }
-    updateAgentModelIndicator();
-  } catch (error) {
-    modelSelect.innerHTML = '<option value="hermes3:latest">hermes3:latest (Default)</option>';
-    showConfigStatus('No se pudo conectar a Ollama.', 'error');
-    updateAgentModelIndicator();
-  }
-}
-
-// Handle Model Change Selection
-modelSelect.addEventListener('change', () => {
-  updateAgentModelIndicator();
-});
-
-function updateAgentModelIndicator() {
-  agentActiveModel.textContent = modelSelect.value;
 }
 
 // Load Files from Configured Directory
@@ -303,12 +266,12 @@ function renderFileList(files) {
     }
     
     const formattedSize = (file.size / 1024).toFixed(1) + ' KB';
-    
+
     li.innerHTML = `
       <div class="file-name" title="${file.name}"><i class="${iconClass}" style="margin-right: 6px; color: ${iconColor}"></i>${file.name}</div>
       <div class="file-path-sub">${file.rel_path} (${formattedSize})</div>
     `;
-    
+
     li.addEventListener('click', () => selectFile(file, li));
     fileList.appendChild(li);
   });
@@ -339,7 +302,7 @@ async function selectFile(file, element) {
   activeFileTitle.textContent = file.name;
   activeFilePath.textContent = file.full_path;
   btnRunAll.removeAttribute('disabled');
-  
+
   // Reset outputs & badges
   resetOutputs();
   
@@ -380,21 +343,18 @@ function resetOutputs() {
   syntaxConsole.textContent = '> Listo.';
   syntaxBadge.className = 'tab-badge dot';
   
-  // Reset desktop test tab
-  desktopResult.innerHTML = `
+  // Reset agent tab
+  agentResult.innerHTML = `
     <div class="empty-state">
       <i class="fa-solid fa-robot"></i>
-      <h3>Simulación de Agente</h3>
-      <p>Inicia el análisis para obtener una traza detallada de variables, flujo de datos y análisis de vulnerabilidades lógicas en base al modelo local seleccionado.</p>
+      <h3>Agente con Herramientas</h3>
+      <p>Elige proveedor y modelo, luego inicia el análisis. Marca 2 o más archivos en la lista de la izquierda para correr el orquestador multi-agente (análisis en paralelo + síntesis de riesgos cruzados).</p>
     </div>
   `;
-  desktopBadge.className = 'tab-badge dot';
-  desktopLoading.classList.add('hidden');
-  gateBanner.classList.add('hidden');
-  gateBanner.innerHTML = '';
-  flowDiagramEmpty.classList.remove('hidden');
-  flowDiagramContainer.classList.add('hidden');
-  flowDiagramContainer.innerHTML = '';
+  agentBadge.className = 'tab-badge dot';
+  agentLoading.classList.add('hidden');
+  agentGateBanner.classList.add('hidden');
+  agentGateBanner.innerHTML = '';
 
   // Reset impact tab
   impactBadge.className = 'tab-badge dot';
@@ -470,36 +430,8 @@ async function runSyntaxCheck(shouldAlertSuccess = false) {
   }
 }
 
-// Exec Desktop Test Simulation with Ollama (Streaming)
-let _desktopTimerInterval = null;
-let _desktopStartTime = null;
-let _desktopHeartbeatLabel = '';
-
-function startDesktopTimer() {
-  _desktopStartTime = Date.now();
-  _desktopHeartbeatLabel = '';
-  desktopTimer.classList.remove('hidden');
-  updateDesktopTimerDisplay();
-  _desktopTimerInterval = setInterval(updateDesktopTimerDisplay, 1000);
-}
-
-function updateDesktopTimerDisplay() {
-  const elapsed = Math.floor((Date.now() - _desktopStartTime) / 1000);
-  const mins = Math.floor(elapsed / 60);
-  const secs = elapsed % 60;
-  const timeStr = mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-  desktopTimer.textContent = _desktopHeartbeatLabel ? `${_desktopHeartbeatLabel} · ${timeStr}` : timeStr;
-}
-
-function stopDesktopTimer() {
-  if (_desktopTimerInterval) {
-    clearInterval(_desktopTimerInterval);
-    _desktopTimerInterval = null;
-  }
-}
-
-// Same timer pattern as Desktop Test, kept separate (not shared) so running
-// one tab's analysis never fights the other's timer/DOM elements.
+// Timer del panel de agente (heartbeats + cronómetro), compartido por el
+// análisis de un solo archivo y por el orquestador multi-agente.
 let _agentTimerInterval = null;
 let _agentStartTime = null;
 let _agentHeartbeatLabel = '';
@@ -527,11 +459,22 @@ function stopAgentTimer() {
   }
 }
 
+// Corre el agente de herramientas sobre el archivo activo. Deliberadamente
+// un solo archivo a la vez — el orquestador multi-agente existe en el
+// backend (/api/qa/multi-agent-test) pero no se expone aquí, para no
+// disparar varias corridas de agente en paralelo desde la UI sin control
+// (rate limits del proveedor, carga de la GPU local).
 async function runAgentTest() {
   if (!selectedFile) return;
 
   const provider = agentProviderSelect.value;
-  const model = agentModelInput.value.trim() || (provider === 'nvidia' ? 'meta/llama-3.1-8b-instruct' : modelSelect.value);
+  const model = agentModelSelect.value;
+  agentLoadingText.textContent = 'El agente está investigando el archivo con herramientas (leer funciones, verificar sintaxis, etc.)...';
+
+  await runAgentStream(`${BACKEND_URL}/api/qa/agent-test`, { filepath: selectedFile.full_path, model, provider }, 'Ocurrió un error al iniciar el agente.');
+}
+
+async function runAgentStream(url, body, errorLabel) {
   agentBadge.className = 'tab-badge dot running';
   agentLoading.classList.remove('hidden');
   agentResult.classList.add('hidden');
@@ -541,15 +484,15 @@ async function runAgentTest() {
   startAgentTimer();
 
   try {
-    const response = await fetch(`${BACKEND_URL}/api/qa/agent-test`, {
+    const response = await fetch(url, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filepath: selectedFile.full_path, model: model, provider: provider })
+      body: JSON.stringify(body)
     });
 
     if (!response.ok) {
       const err = await response.json();
-      throw new Error(err.detail || 'Ocurrió un error al iniciar el agente.');
+      throw new Error(err.detail || errorLabel);
     }
 
     agentLoading.classList.add('hidden');
@@ -562,9 +505,11 @@ async function runAgentTest() {
     let analysisComplete = false;
     let gateData = null;
 
-    // Mismo protocolo __HB__/__GATE__ que Desktop Test — ver processBufferedLines
-    // en runDesktopTest para la explicación completa de por qué se filtran así.
-    function processAgentBufferedLines(buffer, isFinal) {
+    // Heartbeats llegan como líneas "__HB__:" — en vez de acumularlas como
+    // texto permanente (llenaría la pantalla de "sigue procesando..."), se
+    // usan para actualizar el cronómetro en su lugar y se descartan del
+    // markdown final. "__GATE__:" trae el veredicto estructurado.
+    function processBufferedLines(buffer, isFinal) {
       const lines = buffer.split('\n');
       const complete = isFinal ? lines : lines.slice(0, -1);
       const remainder = isFinal ? '' : lines[lines.length - 1];
@@ -589,15 +534,15 @@ async function runAgentTest() {
     while (true) {
       const { value, done } = await reader.read();
       if (done) {
-        streamBuffer = processAgentBufferedLines(streamBuffer, true);
+        streamBuffer = processBufferedLines(streamBuffer, true);
         break;
       }
 
       const chunk = decoder.decode(value, { stream: true });
       streamBuffer += chunk;
-      streamBuffer = processAgentBufferedLines(streamBuffer, false);
+      streamBuffer = processBufferedLines(streamBuffer, false);
 
-      if (accumulatedText.includes('✅ **Análisis completo.**')) {
+      if (accumulatedText.includes('✅ **Análisis completo.**') || accumulatedText.includes('✅ **Análisis multi-agente completo.**')) {
         analysisComplete = true;
       }
 
@@ -608,16 +553,18 @@ async function runAgentTest() {
       }
     }
 
-    if (accumulatedText.includes('✅ **Análisis completo.**')) {
-      analysisComplete = true;
-    }
-
     stopAgentTimer();
     agentBadge.className = analysisComplete ? 'tab-badge dot success' : 'tab-badge dot error';
 
     if (gateData) {
-      renderGateBanner(gateData, agentGateBanner);
+      renderGateBanner(gateData);
     }
+
+    // El agente agrega su propio bloque ```mermaid al final de cada reporte
+    // (uno por archivo, así que en modo multi-agente puede haber varios) —
+    // se renderizan en el lugar donde marked.js ya los puso como bloque de
+    // código, para que cada diagrama quede junto al análisis de su archivo.
+    await renderMermaidBlocks(agentResult);
   } catch (error) {
     stopAgentTimer();
     agentLoading.classList.add('hidden');
@@ -633,136 +580,13 @@ async function runAgentTest() {
   }
 }
 
-async function runDesktopTest() {
-  if (!selectedFile) return;
-  
-  const model = modelSelect.value;
-  desktopBadge.className = 'tab-badge dot running';
-  desktopLoading.classList.remove('hidden');
-  desktopResult.classList.add('hidden');
-  desktopResult.innerHTML = '';
-  gateBanner.classList.add('hidden');
-  gateBanner.innerHTML = '';
-  startDesktopTimer();
-  
-  try {
-    const response = await fetch(`${BACKEND_URL}/api/qa/desktop-test`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filepath: selectedFile.full_path, model: model })
-    });
-    
-    if (!response.ok) {
-      const err = await response.json();
-      throw new Error(err.detail || 'Ocurrió un error al iniciar el agente de Ollama.');
-    }
-    
-    // Hide loading overlay as soon as we start receiving the stream
-    desktopLoading.classList.add('hidden');
-    desktopResult.classList.remove('hidden');
-    
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder('utf-8');
-    let accumulatedText = '';   // real content only — never includes heartbeat/gate lines
-    let streamBuffer = '';      // raw incoming text, line-buffered before filtering
-    let analysisComplete = false;
-    let gateData = null;        // parsed __GATE__ JSON, if the backend sent one
-
-    // Heartbeat lines arrive prefixed with "__HB__:" (see call_ollama_with_heartbeat
-    // and analyze_block in the backend). Rather than appending each one as a
-    // permanent new line in the rendered markdown (which previously filled the
-    // whole screen with dozens of "Ollama sigue procesando..." lines that never
-    // went away), we intercept them here and use them to update the single
-    // timer/status indicator in place, then drop them from accumulatedText.
-    function processBufferedLines(buffer, isFinal) {
-      const lines = buffer.split('\n');
-      // Keep the last (possibly incomplete) line in the buffer unless this is
-      // the final flush, so we don't split a heartbeat line across chunks.
-      const complete = isFinal ? lines : lines.slice(0, -1);
-      const remainder = isFinal ? '' : lines[lines.length - 1];
-
-      for (const line of complete) {
-        if (line.startsWith('__HB__:')) {
-          _desktopHeartbeatLabel = line.slice('__HB__:'.length).replace(/\s*\(\d+s transcurridos\)\s*$/, '').trim();
-          updateDesktopTimerDisplay();
-        } else if (line.startsWith('__GATE__:')) {
-          try {
-            gateData = JSON.parse(line.slice('__GATE__:'.length));
-          } catch (e) {
-            console.error('No se pudo parsear el veredicto del gate:', e);
-          }
-        } else {
-          accumulatedText += line + '\n';
-        }
-      }
-      return remainder;
-    }
-    
-    while (true) {
-      const { value, done } = await reader.read();
-      if (done) {
-        streamBuffer = processBufferedLines(streamBuffer, true);
-        break;
-      }
-      
-      const chunk = decoder.decode(value, { stream: true });
-      streamBuffer += chunk;
-      streamBuffer = processBufferedLines(streamBuffer, false);
-
-      // The backend appends this exact marker once the full analysis (all
-      // blocks + consolidation, or the single-call path) has truly finished.
-      // Heartbeat lines during long CPU-bound waits mean the stream can go
-      // quiet for minutes without this marker, so we can't infer completion
-      // just from "no more chunks arriving yet".
-      if (accumulatedText.includes('✅ **Análisis completo.**')) {
-        analysisComplete = true;
-      }
-      
-      // Render markdown in real-time, using only the filtered content —
-      // heartbeat lines never reach this point, so they can't accumulate
-      // as permanent lines in the result.
-      if (window.marked) {
-        desktopResult.innerHTML = marked.parse(accumulatedText);
-      } else {
-        desktopResult.innerHTML = `<pre style="white-space: pre-wrap; font-family: inherit;">${accumulatedText}</pre>`;
-      }
-    }
-
-    if (accumulatedText.includes('✅ **Análisis completo.**')) {
-      analysisComplete = true;
-    }
-    
-    stopDesktopTimer();
-    desktopBadge.className = analysisComplete ? 'tab-badge dot success' : 'tab-badge dot error';
-
-    if (gateData) {
-      renderGateBanner(gateData);
-    }
-
-    // Extract and render the Mermaid flowchart block, if the model produced one
-    renderFlowDiagram(accumulatedText);
-  } catch (error) {
-    stopDesktopTimer();
-    desktopLoading.classList.add('hidden');
-    desktopResult.classList.remove('hidden');
-    desktopResult.innerHTML = `
-      <div class="empty-state text-danger">
-        <i class="fa-solid fa-triangle-exclamation"></i>
-        <h3>Error en la Prueba de Escritorio</h3>
-        <p>${error.message}</p>
-      </div>
-    `;
-    desktopBadge.className = 'tab-badge dot error';
-  }
-}
-
 // Render the structured risk-gate verdict (parsed from the Matriz de Casos
 // de Prueba on the backend) as a banner above the analysis. This is
 // currently informational only — no action button is gated by it yet — but
 // gives an unambiguous, non-skippable visual signal instead of relying on
 // someone reading the whole table and judging severity themselves.
-function renderGateBanner(gate, targetEl) {
-  const el = targetEl || gateBanner;
+function renderGateBanner(gate) {
+  const el = agentGateBanner;
   el.classList.remove('hidden');
   el.className = `gate-banner gate-${gate.gate_status}`;
 
@@ -803,40 +627,34 @@ function renderGateBanner(gate, targetEl) {
   el.innerHTML = html;
 }
 
-// Extract a ```mermaid ... ``` block from the agent's markdown response and
-// render it with Mermaid.js. If no block is found, or Mermaid fails to parse
-// it (the model can occasionally produce invalid syntax), show a graceful
-// fallback instead of a blank/broken diagram.
-async function renderFlowDiagram(fullText) {
-  const match = fullText.match(/```mermaid\s*\n([\s\S]*?)```/);
+// Busca los bloques ```mermaid que marked.js ya renderizó como código plano
+// (<pre><code class="language-mermaid">) dentro del contenedor dado, y los
+// reemplaza en el mismo lugar por el SVG del diagrama. Puede haber más de
+// uno (el orquestador multi-agente genera un diagrama por archivo) — cada
+// uno queda junto al análisis de su archivo en vez de en un panel aparte.
+async function renderMermaidBlocks(container) {
+  if (typeof mermaid === 'undefined') return;
 
-  if (!match) {
-    flowDiagramEmpty.classList.remove('hidden');
-    flowDiagramEmpty.innerHTML = '<p>El modelo no generó un diagrama de flujo en este análisis.</p>';
-    flowDiagramContainer.classList.add('hidden');
-    return;
-  }
-
-  const mermaidCode = match[1].trim();
-  flowDiagramEmpty.classList.add('hidden');
-  flowDiagramContainer.classList.remove('hidden');
-
-  if (typeof mermaid === 'undefined') {
-    flowDiagramContainer.innerHTML = '<div class="diagram-error-banner">Mermaid.js no se cargó correctamente; no se puede renderizar el diagrama.</div>';
-    return;
-  }
-
-  try {
-    const renderId = 'mermaid-diagram-' + Date.now();
-    const { svg } = await mermaid.render(renderId, mermaidCode);
-    flowDiagramContainer.innerHTML = svg;
-  } catch (err) {
-    flowDiagramContainer.innerHTML = `
-      <div class="diagram-error-banner">
-        El modelo generó un diagrama con sintaxis Mermaid inválida y no se pudo renderizar.
-        <br><br><strong>Código recibido:</strong><pre style="white-space: pre-wrap; margin-top: 8px;">${mermaidCode.replace(/</g, '&lt;')}</pre>
-      </div>
-    `;
+  const blocks = container.querySelectorAll('pre code.language-mermaid');
+  let i = 0;
+  for (const block of blocks) {
+    const code = block.textContent.trim();
+    const pre = block.parentElement;
+    if (!code) continue;
+    try {
+      const renderId = 'mermaid-diagram-' + Date.now() + '-' + (i++);
+      const { svg } = await mermaid.render(renderId, code);
+      const wrapper = document.createElement('div');
+      wrapper.className = 'mermaid-container';
+      wrapper.innerHTML = svg;
+      pre.replaceWith(wrapper);
+    } catch (err) {
+      const errorBanner = document.createElement('div');
+      errorBanner.className = 'diagram-error-banner';
+      errorBanner.innerHTML = `El modelo generó un diagrama con sintaxis Mermaid inválida y no se pudo renderizar.
+        <br><br><strong>Código recibido:</strong><pre style="white-space: pre-wrap; margin-top: 8px;">${code.replace(/</g, '&lt;')}</pre>`;
+      pre.replaceWith(errorBanner);
+    }
   }
 }
 
@@ -1112,11 +930,11 @@ async function runFullOrchestratedQA() {
   await runImpactAnalysis();
   
   if (!syntaxOk) {
-    alert('Orquestador QA Detenido: Se detectaron fallos de sintaxis. Corrige los errores antes de realizar la prueba de escritorio.');
+    alert('Orquestador QA Detenido: Se detectaron fallos de sintaxis. Corrige los errores antes de correr el agente.');
     return;
   }
-  
-  // Step 3: Run Ollama Desktop simulation
-  switchTab('tab-desktop');
-  await runDesktopTest();
+
+  // Step 3: Run the tool-calling agent on the active file
+  switchTab('tab-agent');
+  await runAgentTest();
 }
