@@ -5,7 +5,7 @@ import subprocess
 
 from config import settings
 from code_segmentation import segment_php_code
-from schema_context import get_table_schema
+from schema_context import get_table_schema, get_reglas_negocio
 from dependency_graph import build_dependency_graph, get_table_impact
 from test_matrix import parse_test_matrix, classify_severity
 from llm_client import call_llm_chat
@@ -413,6 +413,27 @@ async def _finalize_analysis(final_text: str, filepath: str, model_name: str, pr
 
 
 def _build_system_prompt(filepath: str) -> str:
+    # Reglas de negocio documentadas del sistema (opcional — knowledge/db_schema.json
+    # no siempre existe, sobre todo en otros proyectos, así que esta sección
+    # se omite por completo si no hay ninguna regla registrada, en vez de
+    # forzar la dependencia). Sin esto, el agente solo puede señalar
+    # violaciones de lógica de negocio que sean obvias con solo leer el
+    # código — nunca las que dependen de una regla no escrita en ningún
+    # lado del código mismo.
+    reglas = get_reglas_negocio()
+    reglas_section = ""
+    if reglas:
+        # La forma de `reglas` no está fijada — puede ser una lista simple de
+        # strings en un proyecto, o un dict anidado con fórmulas y límites
+        # (como en este) en otro. Serializar como JSON en vez de asumir una
+        # forma evita perder contenido real al intentar "bulletizarlo".
+        reglas_json = json.dumps(reglas, ensure_ascii=False, indent=2)
+        reglas_section = (
+            "\nReglas de negocio documentadas de este sistema (formato JSON) — verifica si el código las "
+            "respeta o las viola; esto es tan importante como los riesgos técnicos, y suele ser más difícil "
+            f"de detectar solo leyendo el código sin conocerlas:\n```json\n{reglas_json}\n```\n"
+        )
+
     return (
         f"Eres un Agente de QA para PHP. Tu tarea es analizar el archivo `{filepath}` y producir un "
         "reporte de calidad, usando las herramientas disponibles para VERIFICAR hechos en vez de "
@@ -426,7 +447,7 @@ def _build_system_prompt(filepath: str) -> str:
         "- Usa `leer_bloque` para leer un rango de líneas exacto — es la ÚNICA forma de ver código de "
         "'nivel superior' (código que no está dentro de ninguna función con nombre), ya que `leer_funcion` "
         "requiere un nombre de función y no puede recuperar ese código. `listar_funciones` te da el rango "
-        "de líneas de esos bloques de nivel superior para que se lo pases a `leer_bloque`.\n\n"
+        f"de líneas de esos bloques de nivel superior para que se lo pases a `leer_bloque`.\n{reglas_section}\n"
         "OBLIGATORIO antes de dar tu veredicto final: debes haber llamado `verificar_sintaxis` al menos "
         "una vez, y `leer_funcion` o `leer_bloque` al menos una vez sobre el código que te parezca más "
         "riesgoso (el que interactúe con base de datos, entrada de usuario, o archivos externos) — si el "
@@ -442,8 +463,27 @@ def _build_system_prompt(filepath: str) -> str:
         "Qué hace el archivo.\n\n"
         "### ⚠️ Puntos Críticos y Errores Lógicos\n"
         "Riesgos verificados con las herramientas o vistos directamente en el código.\n\n"
+        "### 🔍 Categorías de Riesgo Lógico Evaluadas Explícitamente\n"
+        "OBLIGATORIO: responde CADA una de estas categorías, aunque tu respuesta sea 'no aplica' o 'no "
+        "encontré nada' — el objetivo es dejar constancia de que las consideraste, no solo reportar lo "
+        "obvio (inyección SQL, funciones no definidas), que ya sale casi siempre. Para cada una, di si "
+        "aplica al archivo y por qué:\n"
+        "- **Autorización/pertenencia**: ¿el código verifica que el recurso (equipo, solicitud, registro) "
+        "realmente pertenece al usuario/colaborador que lo solicita, o confía en un ID que llega de fuera "
+        "sin validar esa relación?\n"
+        "- **Concurrencia / doble-envío**: si dos requests llegan casi al mismo tiempo (doble clic, doble "
+        "submit, dos usuarios), ¿podría duplicarse una asignación, aprobarse dos veces lo mismo, o "
+        "corromperse un conteo/stock?\n"
+        "- **Transición de estado**: si el código cambia un estado (aprobado/rechazado/pendiente/"
+        "asignado/etc.), ¿valida que la transición sea válida desde el estado actual, o podría saltarse "
+        "pasos (ej. aprobar algo ya rechazado)?\n"
+        "- **Cálculo numérico/fecha**: si hay una fórmula o cálculo de fechas (antigüedad, vencimiento, "
+        "mantenimiento, garantía), ¿la lógica es correcta en casos límite (fechas futuras, cero, "
+        "negativos)?\n\n"
         "### 🧪 Matriz de Casos de Prueba (Pasa / Falla)\n"
-        "Tabla con al menos 5 filas (mínimo 1 caso feliz, 2 límite, 2 que rompan el código):\n"
+        "Tabla con al menos 5 filas (mínimo 1 caso feliz, 2 límite, 2 que rompan el código) — si alguna de "
+        "las categorías de arriba sí aplica y encontraste un problema real, debe aparecer como fila aquí, "
+        "no solo mencionarse arriba:\n"
         "| # | Tipo (Feliz/Límite/Rompe) | Entrada / Escenario | Línea o función afectada | Resultado Esperado | ¿Pasa o Falla hoy? |\n"
         "| --- | --- | --- | --- | --- | --- |\n\n"
         "Después de la tabla, para cada fila 'Falla hoy', añade una sub-sección breve con causa raíz y "

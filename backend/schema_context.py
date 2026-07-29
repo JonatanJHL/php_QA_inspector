@@ -13,6 +13,18 @@ except Exception:
     pass  # Si no existe el archivo, el sistema sigue funcionando sin schema
 
 
+def get_reglas_negocio() -> list:
+    """Reglas de negocio documentadas en knowledge/db_schema.json (sección
+    opcional `reglas_negocio`) — devuelve lista vacía si el archivo no
+    existe o no tiene esa sección, sin error, para que el agente funcione
+    igual de bien en proyectos que no tengan este archivo de conocimiento
+    (no todos los sistemas van a tener uno). Sin esto, el agente solo puede
+    detectar violaciones de lógica de negocio que sean obvias leyendo el
+    código — nunca las que dependen de una regla que no está escrita en
+    ningún lado del código mismo."""
+    return _db_schema.get("reglas_negocio", [])
+
+
 def get_table_schema(tabla: str):
     """Lookup puntual de una sola tabla por nombre (con o sin prefijo de
     schema, ej. 'tblColaborador' o 'modulos.tblColaborador'). A diferencia de
