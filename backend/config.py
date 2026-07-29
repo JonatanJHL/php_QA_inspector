@@ -17,11 +17,13 @@ class Settings(BaseModel):
     nvidia_model: str = "nvidia/nemotron-4-340b-instruct"
 
 
-# Default configuration paths (using typical windows path structure found in metadata)
-DEFAULT_PHP_DIR = r"c:\Users\jonat\OneDrive\Escritorio\backup\capa8\prod\SistemaColaboradores"
-if not os.path.exists(DEFAULT_PHP_DIR):
-    # Fallback to current directory if default doesn't exist
-    DEFAULT_PHP_DIR = os.getcwd()
+# Directorio PHP por defecto: opcionalmente configurable via QA_PHP_DIR (util
+# para no tener que abrir la UI y guardarlo manualmente cada vez que se clona
+# el repo en una maquina nueva), si no se especifica cae al directorio desde
+# donde se ejecuta el servidor. Nunca se hardcodea una ruta de una maquina
+# especifica -- este proyecto esta pensado para usarse contra cualquier
+# codigo PHP, no solo el sistema donde se origino.
+DEFAULT_PHP_DIR = os.environ.get("QA_PHP_DIR") or os.getcwd()
 
 settings = Settings(
     php_dir=DEFAULT_PHP_DIR,

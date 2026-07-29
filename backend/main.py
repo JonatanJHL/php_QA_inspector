@@ -130,8 +130,8 @@ def get_file_content(req: FileContentRequest):
     # Security check: ensure the file is genuinely contained within
     # settings.php_dir using os.path.commonpath (not the previous startswith
     # on a raw string, which a sibling directory sharing a name prefix could
-    # pass incorrectly — e.g. "...SistemaColaboradores" vs
-    # "...SistemaColaboradoresBACKUP"). Also removes the old blanket
+    # pass incorrectly — e.g. "...ProjectFolder" vs
+    # "...ProjectFolderBACKUP"). Also removes the old blanket
     # exception that allowed reading ANY file under the user's whole Desktop
     # folder regardless of php_dir — that was far broader than intended and,
     # combined with this endpoint having no authentication, a real

@@ -208,7 +208,7 @@ async def run_desktop_test_stream(filepath: str, model_name: str):
         "options": {
             "temperature": 0.2,
             # El default de Ollama para hermes3 es num_ctx=4096, confirmado con
-            # `ollama ps`. Archivos reales de SistemaColaboradores (500-900
+            # `ollama ps`. Archivos PHP reales de tamaño mediano-grande (500-900
             # líneas) generan un prompt_user de ~7000-8000 tokens, que por sí
             # solo ya rebasa ese límite — Ollama entonces trunca/descarta
             # contenido (empezando por el system prompt, que va primero), y

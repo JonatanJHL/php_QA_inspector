@@ -78,7 +78,7 @@ def build_schema_context(code: str) -> str:
 
     lineas = [
         "### 🗄️ Schema Real de Base de Datos",
-        f"_Sistema: {_db_schema.get('_meta', {}).get('sistema', 'CAPA 8')} — "
+        f"_Sistema: {_db_schema.get('_meta', {}).get('sistema', 'este proyecto')} — "
         "Solo referencia estructural. NO ejecutar queries reales._\n"
     ]
 
