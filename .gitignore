@@ -1,0 +1,24 @@
+# Entornos virtuales / dependencias
+.venv/
+__pycache__/
+*.pyc
+backend/php_ast_bridge/vendor/
+
+# Datos locales generados en tiempo de ejecución — específicos de este
+# equipo, no deben compartirse ni versionarse si el repo se vuelve público.
+qa_history/
+
+# Config específica de cada instalación (hosts de producción/dev reales,
+# y schema real de la base de datos del negocio). Ver los archivos
+# .json.example correspondientes en backend/knowledge/ para la plantilla.
+backend/knowledge/db_hosts.json
+backend/knowledge/db_schema.json
+
+# Sistema operativo / editor
+.DS_Store
+.vscode/
+.idea/
+
+# Logs temporales
+*.log
+/tmp/

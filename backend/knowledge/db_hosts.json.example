@@ -1,0 +1,14 @@
+{
+  "_meta": {
+    "proposito": "Clasificacion OPCIONAL de hosts/IPs conocidos como produccion o desarrollo, para el detector de peligro en danger_flags.py. Si un host detectado en el codigo no aparece aqui, el sistema usa patrones genericos de palabras clave (prod/dev/test/staging/local) en vez de fallar silenciosamente.",
+    "instrucciones": "Copia este archivo a db_hosts.json (sin .example) y llena tus hosts/IPs reales. db_hosts.json esta en .gitignore a proposito -- normalmente contiene IPs/hosts de infraestructura real que no deberian versionarse en un repo compartido."
+  },
+  "produccion": [
+    "produccion.ejemplo.com",
+    "203.0.113.10"
+  ],
+  "desarrollo": [
+    "dev.ejemplo.com",
+    "192.0.2.20"
+  ]
+}

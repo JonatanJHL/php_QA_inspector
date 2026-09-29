@@ -1,0 +1,30 @@
+{
+  "_meta": {
+    "sistema": "NOMBRE_DE_TU_SISTEMA - Descripcion breve",
+    "proposito": "Contexto de schema para pruebas de escritorio con el LLM. NO se ejecutan queries reales contra estas tablas. Es solo referencia para el razonamiento del modelo.",
+    "fuente": "Describe aqui de donde sacaste esta info (ej. 'DESCRIBE real via MCP', 'documentacion interna')",
+    "actualizado": "YYYY-MM-DD",
+    "cobertura": "N tablas documentadas"
+  },
+
+  "tablas": {
+
+    "nombre_schema.nombre_tabla_ejemplo": {
+      "desc": "Descripcion corta de para que sirve esta tabla",
+      "columnas": {
+        "id":       "INT - PK, ID unico",
+        "nombre":   "VARCHAR - Ejemplo de columna normal",
+        "activo":   "TINYINT - EJEMPLO DE TRAMPA: si en tu sistema real 0=activo (invertido), documentalo aqui explicitamente asi el modelo no asume lo contrario",
+        "creadoEn": "DATETIME - Fecha de creacion del registro"
+      },
+      "notas": [
+        "Aqui documenta trampas conocidas: columnas con mayusculas raras, valores invertidos, columnas que NO existen pero uno esperaria que existieran, etc.",
+        "Ejemplo: 'SIN columna eliminado -- para filtrar activos usar solo: activo = 0'"
+      ],
+      "relaciones": {
+        "nombre_schema.otra_tabla": "columna_fk -> otra_tabla.id (descripcion de la relacion)"
+      }
+    }
+
+  }
+}
