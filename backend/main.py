@@ -24,6 +24,7 @@ from dependency_graph import build_dependency_graph, get_table_impact
 from project_graph_cache import get_project_graph
 from ollama_client import call_ollama_chat
 from llm_client import call_llm_chat
+from mermaid_sanitizer import sanitize_mermaid_fragment, strip_diagram_type_declaration
 from agent_loop import run_agent_analysis
 from multi_agent import run_multi_file_analysis
 from agent_session import new_session_state, advance_session
@@ -658,10 +659,19 @@ async def run_desktop_test(req: DesktopTestRequest):
             "1. Qué hace este bloque (1-2 líneas).\n"
             "2. Variables clave que recibe, produce, o modifica.\n"
             "3. Cualquier riesgo o caso que ROMPERÍA la ejecución (sé específico: qué entrada, qué línea).\n"
-            "4. Un fragmento de diagrama Mermaid (solo los nodos de ESTE bloque, con IDs que no se repitan "
-            "entre bloques — usa el prefijo indicado abajo). SIEMPRE encierra el diagrama entre tres "
-            "backticks y la palabra mermaid, así: ```mermaid ... ``` — nunca lo escribas sin ese cercado, "
-            "aunque uses sintaxis 'graph LR' o 'graph TD' en vez de 'flowchart'.\n\n"
+            "4. Un fragmento de diagrama Mermaid (SOLO los nodos y flechas de ESTE bloque, con IDs que no se "
+            "repitan entre bloques — usa el prefijo indicado abajo). NUNCA incluyas la línea de declaración "
+            "del tipo de diagrama ('flowchart TD', 'graph LR', 'graph TD', etc.) — eso se agrega una sola vez "
+            "al consolidar todos los fragmentos; si cada bloque la repite, el diagrama final queda con "
+            "sintaxis inválida (la declaración duplicada). Empieza directo con el primer nodo.\n"
+            "REGLA DE ESCAPADO (la causa #1 de que un diagrama Mermaid no renderice): el TEXTO dentro de "
+            "cada nodo debe ir SIEMPRE entre comillas dobles, y NUNCA debe contener código PHP literal ni "
+            "sus símbolos ($, comillas simples o dobles internas, ==, etc.) — describe la condición en "
+            "palabras simples, no la copies tal cual del código. "
+            "MAL: TOP_C{$_GET['action'] == \"succes\"?} (rompe el parser: comillas y $ sin escapar). "
+            "BIEN: TOP_C{\"¿Acción es succes?\"} (todo el texto entre comillas dobles, sin símbolos de PHP). "
+            "Aplica esto a TODOS los nodos, no solo a los de decisión. "
+            "SIEMPRE encierra el diagrama entre tres backticks y la palabra mermaid, así: ```mermaid ... ```\n\n"
             f"Prefijo de IDs para este bloque: usa IDs como {block['name'] or 'TOP'}_A, {block['name'] or 'TOP'}_B, etc.\n\n"
             f"Código de este bloque:\n```php\n{block['code']}\n```"
         )
@@ -823,7 +833,22 @@ async def run_desktop_test(req: DesktopTestRequest):
 
         # --- Stitch all per-block Mermaid fragments into one flowchart ---
         if mermaid_fragments:
-            merged_mermaid = "```mermaid\nflowchart TD\n" + "\n".join(mermaid_fragments) + "\n```"
+            # Defensivo: aunque el prompt de arriba ya pide explícitamente NO
+            # incluir la declaración de tipo de diagrama, un modelo puede
+            # ignorarlo — confirmado en vivo con un archivo real de 1 solo
+            # bloque, donde el fragmento venía con su propio 'flowchart TD'
+            # y el resultado consolidado quedaba con la línea DUPLICADA
+            # ('flowchart TD\nflowchart TD\n...'), sintaxis Mermaid inválida
+            # que el frontend no podía renderizar. Se limpia cualquier
+            # declaración de tipo (flowchart/graph TD|LR|TB|RL, con o sin
+            # espacio) que aparezca al inicio de un fragmento, sin importar
+            # cuántos bloques la trajeron, antes de anteponer la única
+            # declaración real.
+            cleaned_fragments = [
+                sanitize_mermaid_fragment(strip_diagram_type_declaration(frag))
+                for frag in mermaid_fragments
+            ]
+            merged_mermaid = "```mermaid\nflowchart TD\n" + "\n".join(cleaned_fragments) + "\n```"
             yield "\n\n### 🗺️ Diagrama de Flujo (Consolidado)\n" + merged_mermaid + "\n"
 
         # --- Risk gate: the test matrix lives in the consolidation response
@@ -908,6 +933,20 @@ async def run_desktop_test(req: DesktopTestRequest):
             # accumulated text, so appending it here works with zero frontend changes.
             diagram_response = await generate_mermaid_diagram(code, ext, req.model, provider=req.provider)
             if diagram_response.strip():
+                # Mismo saneo de nodos que en el path de bloques (ver
+                # analyze_php_in_blocks) — aquí el modelo genera el diagrama
+                # completo de una vez (no fragmentos a unir), pero el mismo
+                # riesgo de código PHP literal sin escapar dentro de un nodo
+                # aplica igual, así que se sanea el contenido dentro de la
+                # fence ```mermaid ... ``` antes de mostrarlo.
+                fence_match = re.search(r'```mermaid\s*\n?([\s\S]*?)```', diagram_response)
+                if fence_match:
+                    sanitized_inner = sanitize_mermaid_fragment(fence_match.group(1))
+                    diagram_response = (
+                        diagram_response[:fence_match.start(1)]
+                        + sanitized_inner
+                        + diagram_response[fence_match.end(1):]
+                    )
                 diagram_chunk = "\n\n---\n" + diagram_response
                 accumulated.append(diagram_chunk)
                 yield diagram_chunk

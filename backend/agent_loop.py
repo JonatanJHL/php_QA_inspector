@@ -11,6 +11,7 @@ from project_graph_cache import get_project_graph, get_file_context_summary
 from danger_flags import analyze_danger_flags_content
 from test_matrix import parse_test_matrix, classify_severity
 from llm_client import call_llm_chat
+from mermaid_sanitizer import sanitize_mermaid_fragment
 
 
 MAX_TURNS = 8  # tope de turnos de tool-calling antes de forzar un veredicto final
@@ -432,7 +433,8 @@ async def _generate_flow_diagram_section(filepath: str, model_name: str, provide
     content = result["message"].get("content") or ""
     match = re.search(r'```mermaid\s*\n?([\s\S]*?)```', content)
     if match:
-        yield "\n\n### 🗺️ Diagrama de Flujo\n```mermaid\n" + match.group(1).strip() + "\n```\n"
+        sanitized = sanitize_mermaid_fragment(match.group(1).strip())
+        yield "\n\n### 🗺️ Diagrama de Flujo\n```mermaid\n" + sanitized + "\n```\n"
 
 
 async def run_agent_analysis(filepath: str, model_name: str, provider: str = "ollama", max_turns: int = MAX_TURNS):

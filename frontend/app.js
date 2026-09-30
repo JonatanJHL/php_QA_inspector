@@ -601,12 +601,34 @@ async function runDesktopTest() {
   gateBanner.classList.add('hidden');
   gateBanner.innerHTML = '';
   startDesktopTimer();
+
+  // Watchdog de inactividad: la Fetch API no tiene NINGÚN timeout nativo por
+  // datos que dejan de llegar (confirmado: es comportamiento estándar, no un
+  // bug de un navegador en particular) — si la conexión se corta en silencio
+  // en el camino (el navegador, el SO, o la red intermedia la dan por
+  // muerta sin avisar), `reader.read()` puede quedarse esperando para
+  // siempre sin lanzar ninguna excepción, dejando al usuario viendo
+  // "Analizando..." indefinidamente sin saber si algo se rompió. Este
+  // temporizador se reinicia cada vez que llega un chunk nuevo (heartbeat
+  // incluido, que llegan cada ~4s mientras el modelo piensa) y aborta la
+  // conexión si pasan más de INACTIVITY_TIMEOUT_MS sin ninguno.
+  const INACTIVITY_TIMEOUT_MS = 90000; // 90s: más que el intervalo de heartbeat (~4s) con margen amplio
+  const abortController = new AbortController();
+  let inactivityTimer = null;
+  function resetInactivityWatchdog() {
+    if (inactivityTimer) clearTimeout(inactivityTimer);
+    inactivityTimer = setTimeout(() => {
+      abortController.abort();
+    }, INACTIVITY_TIMEOUT_MS);
+  }
   
   try {
+    resetInactivityWatchdog();
     const response = await fetch(`${BACKEND_URL}/api/qa/desktop-test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filepath: selectedFile.full_path, model: model, provider: providerSelect.value })
+      body: JSON.stringify({ filepath: selectedFile.full_path, model: model, provider: providerSelect.value }),
+      signal: abortController.signal
     });
     
     if (!response.ok) {
@@ -657,6 +679,7 @@ async function runDesktopTest() {
     
     while (true) {
       const { value, done } = await reader.read();
+      resetInactivityWatchdog(); // llegó algo (o el stream cerró) — la conexión sigue viva
       if (done) {
         streamBuffer = processBufferedLines(streamBuffer, true);
         break;
@@ -688,7 +711,8 @@ async function runDesktopTest() {
     if (accumulatedText.includes('✅ **Análisis completo.**')) {
       analysisComplete = true;
     }
-    
+
+    clearTimeout(inactivityTimer); // stream terminó normalmente — ya no hay que vigilar inactividad
     stopDesktopTimer();
     desktopBadge.className = analysisComplete ? 'tab-badge dot success' : 'tab-badge dot error';
 
@@ -699,14 +723,23 @@ async function runDesktopTest() {
     // Extract and render the Mermaid flowchart block, if the model produced one
     renderFlowDiagram(accumulatedText);
   } catch (error) {
+    clearTimeout(inactivityTimer);
     stopDesktopTimer();
     desktopLoading.classList.add('hidden');
     desktopResult.classList.remove('hidden');
+    // AbortError con nuestro propio abortController: fue el watchdog el que
+    // cortó la conexión por inactividad, no un error real del servidor —
+    // mensaje distinto para que el usuario entienda qué pasó y qué hacer.
+    const isWatchdogAbort = error.name === 'AbortError';
+    const title = isWatchdogAbort ? 'Se perdió la conexión con el servidor' : 'Error en la Prueba de Escritorio';
+    const message = isWatchdogAbort
+      ? `No se recibió respuesta del servidor por más de ${Math.round(INACTIVITY_TIMEOUT_MS / 1000)} segundos — la conexión pudo haberse cortado en el camino (navegador, red, o el servidor pudo haberse detenido). El análisis puede haber seguido corriendo del lado del servidor; revisa su consola o inténtalo de nuevo.`
+      : error.message;
     desktopResult.innerHTML = `
       <div class="empty-state text-danger">
         <i class="fa-solid fa-triangle-exclamation"></i>
-        <h3>Error en la Prueba de Escritorio</h3>
-        <p>${error.message}</p>
+        <h3>${title}</h3>
+        <p>${message}</p>
       </div>
     `;
     desktopBadge.className = 'tab-badge dot error';
