@@ -184,11 +184,64 @@ Debe mostrar `"tainted": true` en el argumento de `mysqli_query`.
 
 - **`run.sh`**: arranque local (equivalente Mac de `run.bat`, que es un
   vestigio de una versión anterior en Windows y ya no aplica aquí).
-- **`qa_inspect.sh`**: cliente de línea de comandos para analizar un
-  archivo vía un túnel remoto (ngrok u otro), sin abrir el navegador. Edita
-  las variables `QA_HOST`/`QA_PORT` al inicio del script antes de usarlo —
-  el valor por defecto es un ejemplo de una sesión de ngrok que ya expiró
-  (los túneles gratuitos de ngrok cambian de URL cada vez que se reinician).
+- **`qa_inspect.sh`**: cliente de línea de comandos para análisis ESTÁTICO
+  (sin LLM, vía `/api/qa/inspect-content`) de un archivo a través de un
+  túnel remoto (ngrok, SSH, Tailscale). Configurable con
+  `QA_INSPECT_HOST`/`QA_INSPECT_PORT` y, si el servidor tiene `QA_API_KEY`
+  configurada, con `QA_API_KEY` en el entorno de quien lo corre.
+- **`qa_agent_inspect.sh`**: cliente de línea de comandos para el AGENTE
+  CON LLM real (vía `/api/qa/agent-test`), a diferencia de `qa_inspect.sh`.
+  Resuelve el archivo por nombre vía `/api/files`, corre el agente
+  (puede tardar varios minutos, sobre todo con NVIDIA), y reporta el
+  veredicto del gate con código de salida (0=aprobado, 10=requiere
+  confirmación, 11=bloqueado/error). Uso:
+  `./qa_agent_inspect.sh nombre_archivo.php [ollama|nvidia] [modelo]`.
+  Configurar `QA_URL` al inicio del script según cómo se acceda al backend
+  (túnel SSH inverso, Tailscale, ngrok).
+
+## Proveedores de LLM: Ollama (local) y NVIDIA NIM (nube)
+
+Todo el backend habla con el LLM a través de `llm_client.call_llm_chat`,
+que despacha a `ollama_client.py` (local) o `nvidia_client.py` (nube, API
+compatible con OpenAI) según el parámetro `provider` que llega en cada
+request (`"ollama"` por defecto, o `"nvidia"`).
+
+Para usar NVIDIA, exporta la variable de entorno antes de arrancar el
+backend (nunca se guarda en `config.py` ni se expone por ningún endpoint):
+
+```bash
+export NVIDIA_API_KEY="tu-api-key-de-build.nvidia.com"
+```
+
+Sin esa variable, cualquier request con `provider: "nvidia"` falla con un
+mensaje claro en vez de un error críptico.
+
+**Diferencia de comportamiento**: con Ollama, la ruta de "archivo chico"
+(`/api/qa/desktop-test` sin segmentación) transmite el texto token por
+token en vivo. Con NVIDIA, esa misma ruta espera la respuesta completa y
+la entrega de una sola vez al final (con heartbeats mientras tanto) — es
+una limitación de cómo NVIDIA/OpenAI expone su streaming frente a cómo lo
+usa este proyecto, no un bug.
+
+El orquestador multi-agente (`/api/qa/multi-agent-test`, no expuesto en la
+UI) analiza varios archivos en paralelo real — solo tiene sentido con
+`provider="nvidia"`, ya que con Ollama local los agentes se siguen
+sirviendo uno a la vez de todos modos (una sola GPU).
+
+## Autenticación opcional por API key
+
+El servidor puede exigir un header `X-API-Key` en toda ruta `/api/` si se
+configura la variable de entorno `QA_API_KEY` antes de arrancar:
+
+```bash
+export QA_API_KEY="una-clave-larga-y-aleatoria"
+```
+
+Sin esa variable, el comportamiento es el de siempre — sin autenticación,
+pensado para uso puramente local (`localhost`). Configúrala en cuanto el
+backend deje de ser solo-localhost (por ejemplo si se expone por un túnel
+SSH inverso o ngrok) — cualquiera con la URL puede leer el código fuente
+bajo el directorio PHP configurado si no hay ninguna autenticación.
 
 ## Historial y datos persistidos
 

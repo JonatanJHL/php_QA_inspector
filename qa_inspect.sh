@@ -16,10 +16,24 @@
 QA_HOST="${QA_INSPECT_HOST:-4719-201-150-35-142.ngrok-free.app}"
 QA_PORT="${QA_INSPECT_PORT:-443}"
 QA_URL="https://${QA_HOST}"
-# Header que ngrok requiere para evitar la pagina de advertencia
-QA_NGROK_HEADER="ngrok-skip-browser-warning: 1"
+# Header que ngrok requiere para evitar la pagina de advertencia (solo
+# aplica si de verdad estas usando ngrok — deja vacio con SSH/Tailscale).
+QA_NGROK_HEADER="${QA_NGROK_HEADER:-ngrok-skip-browser-warning: 1}"
+
+# Exporta esta variable en tu ~/.bashrc o antes de correr el script — NUNCA
+# la hardcodees aqui. Debe coincidir con QA_API_KEY configurada en la
+# maquina que corre el backend (si esa maquina no la tiene configurada,
+# deja esto vacio).
+QA_API_KEY="${QA_API_KEY:-}"
+
 LOG_DIR="${HOME}/qa_logs"
 mkdir -p "$LOG_DIR"
+
+# Headers extra a mandar en cada curl — se construyen como array para no
+# mandar un -H vacio si QA_NGROK_HEADER/QA_API_KEY no estan configuradas.
+EXTRA_HEADERS=()
+[ -n "$QA_NGROK_HEADER" ] && EXTRA_HEADERS+=(-H "$QA_NGROK_HEADER")
+[ -n "$QA_API_KEY" ] && EXTRA_HEADERS+=(-H "X-API-Key: ${QA_API_KEY}")
 
 # Colores ANSI
 RED='\033[0;31m'
@@ -65,12 +79,18 @@ log ""
 # --- PASO 1: Verificar conectividad ---
 log "${CYAN}[1/3] Verificando conectividad con el servidor QA...${RESET}"
 PING_HTTP_CODE=$(curl -s -o /tmp/qa_ping_body.txt --max-time 8 -w "%{http_code}" \
-  -H "${QA_NGROK_HEADER}" "${QA_URL}/api/config" 2>&1)
+  "${EXTRA_HEADERS[@]}" "${QA_URL}/api/config" 2>&1)
 PING_RESULT=$(cat /tmp/qa_ping_body.txt 2>/dev/null)
 rm -f /tmp/qa_ping_body.txt
 
 if ! [[ "$PING_HTTP_CODE" =~ ^[0-9]+$ ]]; then
   log "${RED}  X No se pudo conectar a ${QA_URL} (curl fallo, sin respuesta HTTP)${RESET}"
+  exit 2
+fi
+
+if [ "$PING_HTTP_CODE" = "401" ]; then
+  log "${RED}  X API key invalida o faltante (HTTP 401).${RESET}"
+  log "${RED}    Revisa que QA_API_KEY aqui coincida con la configurada en el servidor.${RESET}"
   exit 2
 fi
 
@@ -136,7 +156,7 @@ fi
 TMP_RESPONSE=$(mktemp /tmp/qa_resp_XXXXXX.txt)
 HTTP_CODE=$(curl -s --max-time 120 -X POST "${QA_URL}/api/qa/inspect-content" \
   -H "Content-Type: application/json" \
-  -H "${QA_NGROK_HEADER}" \
+  "${EXTRA_HEADERS[@]}" \
   --data @"$TMP_JSON" \
   -o "$TMP_RESPONSE" \
   -w "%{http_code}" 2>&1)

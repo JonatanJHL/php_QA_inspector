@@ -46,6 +46,13 @@
           <input type="text" id="ollama-url-input" placeholder="http://localhost:11434" value="http://localhost:11434">
         </div>
         <div class="form-group">
+          <label for="provider-select">Proveedor:</label>
+          <select id="provider-select" title="Proveedor del modelo (nvidia requiere NVIDIA_API_KEY configurada en el backend)">
+            <option value="ollama">Ollama (local)</option>
+            <option value="nvidia">NVIDIA (nube)</option>
+          </select>
+        </div>
+        <div class="form-group">
           <label for="model-select">Modelo LLM:</label>
           <div class="select-with-refresh">
             <select id="model-select">

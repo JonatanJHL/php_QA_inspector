@@ -6,10 +6,10 @@ import httpx
 import socket
 import asyncio
 import time
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import StreamingResponse
+from fastapi.responses import StreamingResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional
 
@@ -23,7 +23,9 @@ from qa_history import load_desktop_test_history, save_desktop_test_result
 from dependency_graph import build_dependency_graph, get_table_impact
 from project_graph_cache import get_project_graph
 from ollama_client import call_ollama_chat
+from llm_client import call_llm_chat
 from agent_loop import run_agent_analysis
+from multi_agent import run_multi_file_analysis
 from agent_session import new_session_state, advance_session
 
 app = FastAPI(title="PHP QA Orchestrator API")
@@ -37,6 +39,29 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+
+@app.middleware("http")
+async def require_api_key(request: Request, call_next):
+    """Autenticación por API key — OPCIONAL, solo se exige si QA_API_KEY
+    está configurada como variable de entorno (mismo patrón que
+    NVIDIA_API_KEY: nunca en Settings/config, nunca expuesta por ningún
+    endpoint, nunca escrita a disco por este proyecto). Sin la variable
+    configurada, el comportamiento es el de siempre — sin auth, pensado
+    para uso puramente local. Se exige solo en rutas /api/ (el frontend
+    estático no la necesita para poder cargar la página).
+
+    Esto importa en cuanto este servidor deja de ser solo-localhost — este
+    proyecto ya se expuso una vez por ngrok sin ninguna autenticación (ver
+    qa_inspect.sh), lo cual es un riesgo real de fuga de código fuente dado
+    que cualquiera con la URL puede leer cualquier archivo bajo el
+    directorio PHP configurado."""
+    required_key = os.environ.get("QA_API_KEY")
+    if required_key and request.url.path.startswith("/api/"):
+        provided = request.headers.get("X-API-Key")
+        if provided != required_key:
+            return JSONResponse(status_code=401, content={"detail": "API key inválida o faltante (header X-API-Key)."})
+    return await call_next(request)
+
 # Pydantic schemas for requests
 class ConfigUpdateRequest(BaseModel):
     php_dir: str
@@ -48,6 +73,12 @@ class FileContentRequest(BaseModel):
 class DesktopTestRequest(BaseModel):
     filepath: str
     model: str
+    provider: str = "ollama"  # "ollama" (local) o "nvidia" (nube, requiere NVIDIA_API_KEY en el entorno)
+
+class MultiAgentTestRequest(BaseModel):
+    filepaths: list[str]
+    model: str
+    provider: str = "nvidia"
 
 # Endpoints
 @app.get("/api/config")
@@ -519,13 +550,15 @@ async def run_desktop_test(req: DesktopTestRequest):
 
     async def call_ollama_with_heartbeat(prompt: str, model_name: str, label: str,
                                            timeout: float = 300.0, num_ctx: int = DEFAULT_NUM_CTX,
-                                           heartbeat_interval: float = 4.0):
-        """Thin wrapper around ollama_client.call_ollama_chat preserving the
-        {"content": str, "error": str|None} shape this file's callers expect."""
+                                           heartbeat_interval: float = 4.0, provider: str = "ollama"):
+        """Thin wrapper around llm_client.call_llm_chat preserving the
+        {"content": str, "error": str|None} shape this file's callers expect.
+        `provider` selecciona ollama (local) o nvidia (nube) — mismo
+        mecanismo que agent_loop.py, ver llm_client.py."""
         result = None
-        async for item in call_ollama_chat(
+        async for item in call_llm_chat(
             [{"role": "user", "content": prompt}], model_name, label,
-            timeout=timeout, num_ctx=num_ctx, heartbeat_interval=heartbeat_interval
+            provider=provider, timeout=timeout, num_ctx=num_ctx, heartbeat_interval=heartbeat_interval
         ):
             if isinstance(item, dict):
                 message = item.get("message")
@@ -534,16 +567,17 @@ async def run_desktop_test(req: DesktopTestRequest):
                 yield item
         yield result
 
-    async def generate_mermaid_diagram(code_str: str, extension: str, model_name: str) -> str:
-        """Second, focused Ollama call dedicated ONLY to producing a Mermaid
-        flowchart. Kept deliberately short: Hermes3 (a small local model)
-        tends to drop instructions from the tail of a long, multi-section
-        prompt — asking for 7 things at once meant the diagram request was
-        the one most likely to get skipped. A short, single-purpose prompt
-        is far more reliable for actually getting valid Mermaid syntax back.
-        Non-streaming (simpler to parse a single response), with a short
-        timeout since this is a small, bounded generation task.
-        """
+    async def generate_mermaid_diagram(code_str: str, extension: str, model_name: str, provider: str = "ollama") -> str:
+        """Second, focused LLM call dedicated ONLY to producing a Mermaid
+        flowchart. Kept deliberately short: small models tend to drop
+        instructions from the tail of a long, multi-section prompt — asking
+        for 7 things at once meant the diagram request was the one most
+        likely to get skipped. A short, single-purpose prompt is far more
+        reliable for actually getting valid Mermaid syntax back.
+        `provider` selecciona ollama (local, vía httpx directo — el catálogo
+        Ollama expone /api/chat propio, no vale la pena pasar por
+        llm_client aquí) o nvidia (vía call_llm_chat, que ya sabe hablar
+        OpenAI-compatible)."""
         diagram_prompt = (
             "Genera ÚNICAMENTE un diagrama de flujo en formato Mermaid (`flowchart TD`) que represente "
             "el flujo principal del siguiente código. No agregues explicación, resumen, ni texto fuera "
@@ -557,6 +591,20 @@ async def run_desktop_test(req: DesktopTestRequest):
             "`classDef errorNode fill:#7f1d1d,stroke:#ef4444,color:#fff;`\n\n"
             f"Código ({extension[1:]}):\n```{extension[1:]}\n{code_str}\n```"
         )
+        if provider == "nvidia":
+            result = None
+            try:
+                async for item in call_llm_chat(
+                    [{"role": "user", "content": diagram_prompt}], model_name, "Diagrama de flujo",
+                    provider="nvidia", timeout=180.0
+                ):
+                    if isinstance(item, dict):
+                        result = item
+            except Exception:
+                return ""
+            if result and result.get("message"):
+                return result["message"].get("content") or ""
+            return ""
         try:
             async with httpx.AsyncClient(timeout=180.0) as client:
                 resp = await client.post(
@@ -579,7 +627,7 @@ async def run_desktop_test(req: DesktopTestRequest):
             # user already saw is unaffected — just no diagram this time.
             return ""
 
-    async def analyze_block(block: dict, accumulated_summary: str, model_name: str):
+    async def analyze_block(block: dict, accumulated_summary: str, model_name: str, provider: str = "ollama"):
         """Analyze a single code block (one function, or a merged chunk of
         top-level code) with a short, focused prompt. Async GENERATOR: while
         Ollama is thinking (which can take minutes on CPU-only hardware),
@@ -622,9 +670,9 @@ async def run_desktop_test(req: DesktopTestRequest):
         # necessary: this hardware's Ollama backend can crash mid-request and
         # auto-restarts within seconds), so no separate outer retry is needed here.
         result = None
-        async for item in call_ollama_chat(
+        async for item in call_llm_chat(
             [{"role": "user", "content": block_prompt}], model_name, "Analizando bloque",
-            timeout=300.0, num_ctx=DEFAULT_NUM_CTX
+            provider=provider, timeout=300.0, num_ctx=DEFAULT_NUM_CTX
         ):
             if isinstance(item, dict):
                 message = item.get("message")
@@ -654,7 +702,7 @@ async def run_desktop_test(req: DesktopTestRequest):
 
 
 
-    async def analyze_php_in_blocks(model_name: str):
+    async def analyze_php_in_blocks(model_name: str, provider: str = "ollama"):
         """Loop-engineering path for large PHP files: segment into logical
         blocks, analyze each with a short focused call (carrying forward a
         compact summary as context), then make one final consolidating call
@@ -678,7 +726,7 @@ async def run_desktop_test(req: DesktopTestRequest):
             # heartbeat straight to the frontend for real-time "still
             # working" feedback; capture the dict when it arrives.
             result = None
-            async for item in analyze_block(block, running_summary, model_name):
+            async for item in analyze_block(block, running_summary, model_name, provider=provider):
                 if isinstance(item, dict):
                     result = item
                 else:
@@ -759,7 +807,7 @@ async def run_desktop_test(req: DesktopTestRequest):
         )
         consolidation_result = None
         async for item in call_ollama_with_heartbeat(
-            consolidation_prompt, model_name, "Consolidando hallazgos", timeout=300.0
+            consolidation_prompt, model_name, "Consolidando hallazgos", timeout=300.0, provider=provider
         ):
             if isinstance(item, dict):
                 consolidation_result = item
@@ -802,7 +850,7 @@ async def run_desktop_test(req: DesktopTestRequest):
         # analyzed block-by-block instead of one oversized call. ---
         if ext == '.php' and len(code) > LOOP_ENGINEERING_THRESHOLD_CHARS:
             try:
-                async for chunk in analyze_php_in_blocks(req.model):
+                async for chunk in analyze_php_in_blocks(req.model, provider=req.provider):
                     accumulated.append(chunk)
                     yield chunk
                 full_text = "".join(accumulated)
@@ -813,29 +861,52 @@ async def run_desktop_test(req: DesktopTestRequest):
             return
 
         try:
-            async with httpx.AsyncClient(timeout=300.0) as client:
-                async with client.stream("POST", url, json=payload) as response:
-                    if response.status_code != 200:
-                        err_body = await response.aread()
-                        yield f"Error: Ollama devolvió código {response.status_code}. Detalles: {err_body.decode('utf-8')}"
-                        return
-                    
-                    async for line in response.aiter_lines():
-                        if line.strip():
-                            try:
-                                data = json.loads(line)
-                                chunk = data.get("message", {}).get("content", "")
-                                if chunk:
-                                    accumulated.append(chunk)
-                                    yield chunk
-                            except Exception:
-                                pass
+            if req.provider == "nvidia":
+                # NVIDIA/OpenAI no expone streaming token-por-token vía
+                # llm_client (call_llm_chat solo yield heartbeats + un
+                # resultado final completo) — decisión aceptada: con NVIDIA
+                # el texto aparece de golpe al final en vez de en vivo,
+                # a cambio de heartbeats mientras se espera.
+                nvidia_result = None
+                async for item in call_llm_chat(
+                    [{"role": "system", "content": prompt_system}, {"role": "user", "content": prompt_user}],
+                    req.model, "Analizando", provider="nvidia", timeout=300.0
+                ):
+                    if isinstance(item, dict):
+                        nvidia_result = item
+                    else:
+                        yield item
+                if nvidia_result and nvidia_result.get("message"):
+                    full_response_text = nvidia_result["message"].get("content") or ""
+                    accumulated.append(full_response_text)
+                    yield full_response_text
+                elif nvidia_result and nvidia_result.get("error"):
+                    yield f"Error: {nvidia_result['error']}"
+                    return
+            else:
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    async with client.stream("POST", url, json=payload) as response:
+                        if response.status_code != 200:
+                            err_body = await response.aread()
+                            yield f"Error: Ollama devolvió código {response.status_code}. Detalles: {err_body.decode('utf-8')}"
+                            return
+                        
+                        async for line in response.aiter_lines():
+                            if line.strip():
+                                try:
+                                    data = json.loads(line)
+                                    chunk = data.get("message", {}).get("content", "")
+                                    if chunk:
+                                        accumulated.append(chunk)
+                                        yield chunk
+                                except Exception:
+                                    pass
 
             # Main analysis finished. Now make the dedicated, short call for
             # the Mermaid diagram and stream it as an additional chunk. The
             # frontend just looks for a ```mermaid block anywhere in the full
             # accumulated text, so appending it here works with zero frontend changes.
-            diagram_response = await generate_mermaid_diagram(code, ext, req.model)
+            diagram_response = await generate_mermaid_diagram(code, ext, req.model, provider=req.provider)
             if diagram_response.strip():
                 diagram_chunk = "\n\n---\n" + diagram_response
                 accumulated.append(diagram_chunk)
@@ -989,7 +1060,7 @@ async def run_agent_test(req: DesktopTestRequest):
     async def event_generator():
         accumulated = []
         try:
-            async for chunk in run_agent_analysis(req.filepath, req.model):
+            async for chunk in run_agent_analysis(req.filepath, req.model, provider=req.provider):
                 accumulated.append(chunk)
                 yield chunk
             full_text = "".join(accumulated)
@@ -997,6 +1068,29 @@ async def run_agent_test(req: DesktopTestRequest):
                 save_desktop_test_result(req.filepath, req.model, code, full_text)
         except Exception as e:
             yield f"Error inesperado durante el análisis del agente: {str(e)}"
+
+    return StreamingResponse(event_generator(), media_type="text/plain")
+
+
+@app.post("/api/qa/multi-agent-test")
+async def run_multi_agent_test(req: MultiAgentTestRequest):
+    """Orquestador multi-agente real (ver multi_agent.py): varios archivos
+    analizados EN PARALELO + un agente coordinador que sintetiza el impacto
+    cruzado entre ellos. Solo tiene sentido de verdad con provider="nvidia"
+    (concurrencia real); con Ollama local, los agentes se siguen sirviendo
+    uno a la vez de todos modos. Deliberadamente no expuesto en la UI —
+    correr muchos archivos a la vez sin control puede pegar contra rate
+    limits del proveedor o saturar la GPU local. Mismo protocolo __HB__/__GATE__."""
+    missing = [fp for fp in req.filepaths if not os.path.exists(fp)]
+    if missing:
+        raise HTTPException(status_code=404, detail=f"Archivo(s) no encontrado(s): {', '.join(missing)}")
+
+    async def event_generator():
+        try:
+            async for chunk in run_multi_file_analysis(req.filepaths, req.model, provider=req.provider):
+                yield chunk
+        except Exception as e:
+            yield f"Error inesperado durante el análisis multi-agente: {str(e)}"
 
     return StreamingResponse(event_generator(), media_type="text/plain")
 

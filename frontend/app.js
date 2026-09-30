@@ -12,6 +12,18 @@ const phpDirInput = document.getElementById('php-dir-input');
 const saveConfigBtn = document.getElementById('save-config-btn');
 const ollamaUrlInput = document.getElementById('ollama-url-input');
 const modelSelect = document.getElementById('model-select');
+const providerSelect = document.getElementById('provider-select');
+
+// Presets de modelo NVIDIA ya probados como confiables (a diferencia de
+// Ollama, cuyos modelos se descubren dinámicamente vía /api/ollama/models,
+// NVIDIA no tiene un endpoint de "modelos instalados" que consultar — es un
+// servicio en la nube con catálogo fijo, así que aquí sí tiene sentido una
+// lista curada en vez de intentar descubrirla).
+const NVIDIA_MODEL_PRESETS = [
+  { value: 'nvidia/llama-3.3-nemotron-super-49b-v1.5', label: 'Nemotron 49B (recomendado — probado y confiable)' },
+  { value: 'meta/llama-3.1-8b-instruct', label: 'Llama 3.1 8B (más rápido, menos confiable)' },
+  { value: 'meta/llama-3.3-70b-instruct', label: 'Llama 3.3 70B (lento en el tier gratuito)' },
+];
 const refreshModelsBtn = document.getElementById('refresh-models-btn');
 const configStatus = document.getElementById('config-status');
 const shareUrlContainer = document.getElementById('share-url-container');
@@ -242,6 +254,21 @@ async function loadModels() {
 // Handle Model Change Selection
 modelSelect.addEventListener('change', () => {
   updateAgentModelIndicator();
+});
+
+// Cambiar de provider repuebla el selector de modelo: Ollama vuelve a
+// consultar /api/ollama/models (lista real de lo instalado), NVIDIA pinta
+// los presets fijos de arriba (no hay lista "instalada" que consultar en
+// un servicio en la nube).
+providerSelect.addEventListener('change', () => {
+  if (providerSelect.value === 'nvidia') {
+    modelSelect.innerHTML = NVIDIA_MODEL_PRESETS
+      .map(p => `<option value="${p.value}">${p.label}</option>`).join('');
+    showConfigStatus('Usando NVIDIA NIM — requiere NVIDIA_API_KEY configurada en el backend.', 'success');
+    updateAgentModelIndicator();
+  } else {
+    loadModels();
+  }
 });
 
 function updateAgentModelIndicator() {
@@ -579,7 +606,7 @@ async function runDesktopTest() {
     const response = await fetch(`${BACKEND_URL}/api/qa/desktop-test`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ filepath: selectedFile.full_path, model: model })
+      body: JSON.stringify({ filepath: selectedFile.full_path, model: model, provider: providerSelect.value })
     });
     
     if (!response.ok) {

@@ -22,6 +22,7 @@ import json
 from config import DEFAULT_NUM_CTX
 from code_segmentation import segment_php_code
 from danger_flags import analyze_danger_flags_content
+from schema_context import get_reglas_negocio
 from test_matrix import parse_test_matrix, classify_severity
 from ollama_client import call_ollama_chat
 
@@ -110,6 +111,22 @@ def _build_system_prompt(rel_filepath: str, project_context: str, requires_leer_
         " (este archivo no tiene funciones nombradas — todo es código de nivel superior, así que "
         "no necesitas llamar `leer_funcion`; ya tienes el código completo en el mensaje anterior)"
     )
+
+    # Reglas de negocio documentadas del sistema (opcional — ver
+    # schema_context.get_reglas_negocio). Igual que en agent_loop.py: sin
+    # esto, el agente solo puede señalar violaciones de lógica de negocio
+    # obvias leyendo el código, nunca las que dependen de una regla no
+    # escrita en ningún lado del código mismo.
+    reglas = get_reglas_negocio()
+    reglas_section = ""
+    if reglas:
+        reglas_json = json.dumps(reglas, ensure_ascii=False, indent=2)
+        reglas_section = (
+            "\nReglas de negocio documentadas de este sistema (formato JSON) — verifica si el código las "
+            "respeta o las viola; esto es tan importante como los riesgos técnicos, y suele ser más difícil "
+            f"de detectar solo leyendo el código sin conocerlas:\n```json\n{reglas_json}\n```\n"
+        )
+
     return (
         f"Eres un Agente de QA para PHP/JS. Tu tarea es analizar el archivo `{rel_filepath}` y producir "
         "un reporte de calidad, usando las herramientas disponibles para VERIFICAR hechos en vez de "
@@ -119,7 +136,7 @@ def _build_system_prompt(rel_filepath: str, project_context: str, requires_leer_
         "- Usa `listar_funciones` para ver el mapa del archivo antes de pedir el código de una función "
         "específica con `leer_funcion`.\n"
         "- Usa `verificar_sintaxis` para confirmar errores de sintaxis reales, no supuestos.\n"
-        "- Usa `obtener_impacto` si quieres saber qué otros archivos podrían verse afectados.\n\n"
+        f"- Usa `obtener_impacto` si quieres saber qué otros archivos podrían verse afectados.\n{reglas_section}\n"
         f"OBLIGATORIO antes de dar tu veredicto final: debes haber llamado `verificar_sintaxis` al menos "
         f"una vez{leer_funcion_req}. Si te faltan estas llamadas, NO concluyas todavía: sigue investigando.\n\n"
         "IMPORTANTE: en cuanto hayas cumplido lo obligatorio de arriba, DEBES dar tu veredicto final de "
@@ -133,8 +150,27 @@ def _build_system_prompt(rel_filepath: str, project_context: str, requires_leer_
         "el siguiente formato Markdown:\n\n"
         "### 📋 Resumen del Componente\nQué hace el archivo.\n\n"
         "### ⚠️ Puntos Críticos y Errores Lógicos\nRiesgos verificados.\n\n"
+        "### 🔍 Categorías de Riesgo Lógico Evaluadas Explícitamente\n"
+        "OBLIGATORIO: responde CADA una de estas categorías, aunque tu respuesta sea 'no aplica' o 'no "
+        "encontré nada' — el objetivo es dejar constancia de que las consideraste, no solo reportar lo "
+        "obvio (inyección SQL, funciones no definidas), que ya sale casi siempre. Para cada una, di si "
+        "aplica al archivo y por qué:\n"
+        "- **Autorización/pertenencia**: ¿el código verifica que el recurso (equipo, solicitud, registro) "
+        "realmente pertenece al usuario/colaborador que lo solicita, o confía en un ID que llega de fuera "
+        "sin validar esa relación?\n"
+        "- **Concurrencia / doble-envío**: si dos requests llegan casi al mismo tiempo (doble clic, doble "
+        "submit, dos usuarios), ¿podría duplicarse una asignación, aprobarse dos veces lo mismo, o "
+        "corromperse un conteo/stock?\n"
+        "- **Transición de estado**: si el código cambia un estado (aprobado/rechazado/pendiente/"
+        "asignado/etc.), ¿valida que la transición sea válida desde el estado actual, o podría saltarse "
+        "pasos (ej. aprobar algo ya rechazado)?\n"
+        "- **Cálculo numérico/fecha**: si hay una fórmula o cálculo de fechas (antigüedad, vencimiento, "
+        "mantenimiento, garantía), ¿la lógica es correcta en casos límite (fechas futuras, cero, "
+        "negativos)?\n\n"
         "### 🧪 Matriz de Casos de Prueba (Pasa / Falla)\n"
-        "Tabla con al menos 5 filas (mínimo 1 caso feliz, 2 límite, 2 que rompan el código):\n"
+        "Tabla con al menos 5 filas (mínimo 1 caso feliz, 2 límite, 2 que rompan el código) — si alguna de "
+        "las categorías de arriba sí aplica y encontraste un problema real, debe aparecer como fila aquí, "
+        "no solo mencionarse arriba:\n"
         "| # | Tipo (Feliz/Límite/Rompe) | Entrada / Escenario | Línea o función afectada | Resultado Esperado | ¿Pasa o Falla hoy? |\n"
         "| --- | --- | --- | --- | --- | --- |\n\n"
         "Después de la tabla, para cada fila 'Falla hoy', añade causa raíz y sugerencia de corrección."

@@ -5,12 +5,12 @@ import subprocess
 
 from config import settings, DEFAULT_NUM_CTX
 from code_segmentation import segment_php_code
-from schema_context import get_table_schema
+from schema_context import get_table_schema, get_reglas_negocio
 from dependency_graph import get_table_impact
 from project_graph_cache import get_project_graph, get_file_context_summary
 from danger_flags import analyze_danger_flags_content
 from test_matrix import parse_test_matrix, classify_severity
-from ollama_client import call_ollama_chat
+from llm_client import call_llm_chat
 
 
 MAX_TURNS = 8  # tope de turnos de tool-calling antes de forzar un veredicto final
@@ -306,6 +306,27 @@ def _build_system_prompt(filepath: str) -> str:
 
     project_context_block = f"\n\n{project_context}\n" if project_context else ""
 
+    # Reglas de negocio documentadas del sistema (opcional — knowledge/db_schema.json
+    # no siempre existe, sobre todo en otros proyectos, así que esta sección
+    # se omite por completo si no hay ninguna regla registrada, en vez de
+    # forzar la dependencia). Sin esto, el agente solo puede señalar
+    # violaciones de lógica de negocio que sean obvias con solo leer el
+    # código — nunca las que dependen de una regla no escrita en ningún
+    # lado del código mismo.
+    reglas = get_reglas_negocio()
+    reglas_section = ""
+    if reglas:
+        # La forma de `reglas` no está fijada — puede ser una lista simple de
+        # strings en un proyecto, o un dict anidado con fórmulas y límites
+        # en otro. Serializar como JSON en vez de asumir una forma evita
+        # perder contenido real al intentar "bulletizarlo".
+        reglas_json = json.dumps(reglas, ensure_ascii=False, indent=2)
+        reglas_section = (
+            "\nReglas de negocio documentadas de este sistema (formato JSON) — verifica si el código las "
+            "respeta o las viola; esto es tan importante como los riesgos técnicos, y suele ser más difícil "
+            f"de detectar solo leyendo el código sin conocerlas:\n```json\n{reglas_json}\n```\n"
+        )
+
     return (
         f"Eres un Agente de QA para PHP. Tu tarea es analizar el archivo `{filepath}` y producir un "
         "reporte de calidad, usando las herramientas disponibles para VERIFICAR hechos en vez de "
@@ -316,7 +337,7 @@ def _build_system_prompt(filepath: str) -> str:
         "específica con `leer_funcion`.\n"
         "- Usa `verificar_sintaxis` para confirmar errores de sintaxis reales, no supuestos.\n"
         "- Usa `consultar_schema_tabla` si el código referencia una tabla y quieres saber sus columnas reales.\n"
-        "- Usa `obtener_impacto` si quieres saber qué otros archivos podrían verse afectados.\n\n"
+        f"- Usa `obtener_impacto` si quieres saber qué otros archivos podrían verse afectados.\n{reglas_section}\n"
         "OBLIGATORIO antes de dar tu veredicto final: debes haber llamado `verificar_sintaxis` al menos "
         "una vez, y `leer_funcion` al menos una vez sobre la función que te parezca más riesgosa (la que "
         "interactúe con base de datos, entrada de usuario, o archivos externos) — ver solo el listado de "
@@ -331,8 +352,27 @@ def _build_system_prompt(filepath: str) -> str:
         "Qué hace el archivo.\n\n"
         "### ⚠️ Puntos Críticos y Errores Lógicos\n"
         "Riesgos verificados con las herramientas o vistos directamente en el código.\n\n"
+        "### 🔍 Categorías de Riesgo Lógico Evaluadas Explícitamente\n"
+        "OBLIGATORIO: responde CADA una de estas categorías, aunque tu respuesta sea 'no aplica' o 'no "
+        "encontré nada' — el objetivo es dejar constancia de que las consideraste, no solo reportar lo "
+        "obvio (inyección SQL, funciones no definidas), que ya sale casi siempre. Para cada una, di si "
+        "aplica al archivo y por qué:\n"
+        "- **Autorización/pertenencia**: ¿el código verifica que el recurso (equipo, solicitud, registro) "
+        "realmente pertenece al usuario/colaborador que lo solicita, o confía en un ID que llega de fuera "
+        "sin validar esa relación?\n"
+        "- **Concurrencia / doble-envío**: si dos requests llegan casi al mismo tiempo (doble clic, doble "
+        "submit, dos usuarios), ¿podría duplicarse una asignación, aprobarse dos veces lo mismo, o "
+        "corromperse un conteo/stock?\n"
+        "- **Transición de estado**: si el código cambia un estado (aprobado/rechazado/pendiente/"
+        "asignado/etc.), ¿valida que la transición sea válida desde el estado actual, o podría saltarse "
+        "pasos (ej. aprobar algo ya rechazado)?\n"
+        "- **Cálculo numérico/fecha**: si hay una fórmula o cálculo de fechas (antigüedad, vencimiento, "
+        "mantenimiento, garantía), ¿la lógica es correcta en casos límite (fechas futuras, cero, "
+        "negativos)?\n\n"
         "### 🧪 Matriz de Casos de Prueba (Pasa / Falla)\n"
-        "Tabla con al menos 5 filas (mínimo 1 caso feliz, 2 límite, 2 que rompan el código):\n"
+        "Tabla con al menos 5 filas (mínimo 1 caso feliz, 2 límite, 2 que rompan el código) — si alguna de "
+        "las categorías de arriba sí aplica y encontraste un problema real, debe aparecer como fila aquí, "
+        "no solo mencionarse arriba:\n"
         "| # | Tipo (Feliz/Límite/Rompe) | Entrada / Escenario | Línea o función afectada | Resultado Esperado | ¿Pasa o Falla hoy? |\n"
         "| --- | --- | --- | --- | --- | --- |\n\n"
         "Después de la tabla, para cada fila 'Falla hoy', añade una sub-sección breve con causa raíz y "
@@ -341,7 +381,61 @@ def _build_system_prompt(filepath: str) -> str:
     )
 
 
-async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MAX_TURNS):
+async def _generate_flow_diagram_section(filepath: str, model_name: str, provider: str = "ollama"):
+    """Segunda llamada corta y dedicada SOLO a producir un diagrama de flujo
+    Mermaid — pedirlo junto con el veredicto principal (que ya tiene 3
+    secciones y una matriz de casos) es menos confiable: incluso modelos
+    grandes tienden a saltarse instrucciones al final de un prompt largo.
+    Un prompt corto de un solo propósito da sintaxis Mermaid válida con
+    mucha más consistencia. Es un generador async: puede yield heartbeats
+    mientras espera, y al final el bloque de texto del diagrama (o nada, si
+    la llamada falla o el archivo no se pudo releer — el diagrama es un
+    extra, nunca debe tumbar el veredicto principal que el usuario ya
+    recibió)."""
+    try:
+        real_path = _ensure_within_php_dir(filepath)
+        with open(real_path, "r", encoding="utf-8", errors="replace") as f:
+            code_str = f.read()
+    except Exception:
+        return
+
+    ext = (os.path.splitext(filepath)[1] or ".php").lstrip(".")
+    diagram_prompt = (
+        "Genera ÚNICAMENTE un diagrama de flujo en formato Mermaid (`flowchart TD`) que represente "
+        "el flujo principal del siguiente código. No agregues explicación, resumen, ni texto fuera "
+        "del bloque de código. Solo el bloque ```mermaid ... ```.\n\n"
+        "Reglas del diagrama:\n"
+        "- IDs de nodo cortos (A, B, C...), texto breve dentro de cada nodo (máximo 6 palabras).\n"
+        "- Incluye puntos de entrada, decisiones condicionales (nodos de rombo), accesos a base de "
+        "datos/servicios externos, y puntos de salida.\n"
+        "- Si detectas un punto que claramente rompería la ejecución (excepción no capturada, "
+        "división por cero, acceso a índice inexistente, etc.), márcalo con la clase `errorNode`: "
+        "`classDef errorNode fill:#7f1d1d,stroke:#ef4444,color:#fff;`\n\n"
+        f"Código ({ext}):\n```{ext}\n{code_str}\n```"
+    )
+
+    result = None
+    try:
+        async for item in call_llm_chat(
+            [{"role": "user", "content": diagram_prompt}], model_name, "Diagrama de flujo",
+            provider=provider, timeout=180.0, num_ctx=DEFAULT_NUM_CTX
+        ):
+            if isinstance(item, dict):
+                result = item
+            else:
+                yield item
+    except Exception:
+        return
+
+    if not (result and result.get("message")):
+        return
+    content = result["message"].get("content") or ""
+    match = re.search(r'```mermaid\s*\n?([\s\S]*?)```', content)
+    if match:
+        yield "\n\n### 🗺️ Diagrama de Flujo\n```mermaid\n" + match.group(1).strip() + "\n```\n"
+
+
+async def run_agent_analysis(filepath: str, model_name: str, provider: str = "ollama", max_turns: int = MAX_TURNS):
     """Loop de agente secuencial (ReAct: pensar -> llamar herramienta -> observar
     -> repetir) para analizar un archivo PHP. A diferencia del pipeline fijo en
     main.py (analyze_php_in_blocks), aquí el MODELO decide qué información
@@ -349,7 +443,15 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
     yields heartbeats/progreso (mismo protocolo `__HB__:` que el resto del
     proyecto), y al final el texto de la respuesta + `__GATE__:{json}` +
     marcador de completado — mismo contrato que /api/qa/desktop-test, así que
-    el frontend no necesita cambios para renderizarlo."""
+    el frontend no necesita cambios para renderizarlo.
+
+    `provider` selecciona el backend ("ollama" local o "nvidia" en la nube,
+    vía llm_client.call_llm_chat) sin cambiar nada de la lógica del loop. El
+    formato de tool_calls difiere entre ambos (Ollama ya lo da parseado;
+    OpenAI/NVIDIA exige function.arguments como string JSON en el historial
+    y correlaciona resultados por tool_call_id, no por nombre) — ese detalle
+    se absorbe en los dos bloques marcados "NVIDIA" más abajo, el resto del
+    loop es idéntico para ambos proveedores."""
     messages = [
         {"role": "system", "content": _build_system_prompt(filepath)},
         {"role": "user", "content": f"Analiza el archivo `{filepath}`. Empieza usando `listar_funciones` para orientarte."}
@@ -372,7 +474,7 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
     for turn in range(1, max_turns + 1):
         label = f"Turno {turn}/{max_turns}"
         result = None
-        async for item in call_ollama_chat(messages, model_name, label, tools=TOOLS_SCHEMA, timeout=300.0, num_ctx=DEFAULT_NUM_CTX):
+        async for item in call_llm_chat(messages, model_name, label, provider=provider, tools=TOOLS_SCHEMA, timeout=300.0, num_ctx=DEFAULT_NUM_CTX):
             if isinstance(item, dict):
                 result = item
             else:
@@ -380,7 +482,7 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
 
         if result is None or result.get("error"):
             err = result.get("error") if result else "sin respuesta"
-            yield f"\n\n❌ **Error de comunicación con Ollama en el turno {turn}**: {err}\n"
+            yield f"\n\n❌ **Error de comunicación con {provider} en el turno {turn}**: {err}\n"
             yield f"\n\n__GATE__:{json.dumps({'gate_status': 'error_analisis', 'fallas_criticas': [], 'fallas_medias': [], 'total_casos': 0}, ensure_ascii=False)}\n"
             yield "\n\n⚠️ **Análisis incompleto.**\n"
             return
@@ -412,6 +514,8 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
             yield final_text + "\n\n"
             matrix_rows = parse_test_matrix(final_text)
             gate = classify_severity(matrix_rows, danger_score=code_danger_score, danger_flags=code_danger_flags)
+            async for item in _generate_flow_diagram_section(filepath, model_name, provider):
+                yield item
             yield f"\n\n__GATE__:{json.dumps(gate, ensure_ascii=False)}\n"
             yield "\n\n✅ **Análisis completo.**\n"
             return
@@ -423,7 +527,22 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
         if thinking:
             yield f"__HB__:{thinking[:100]}\n"
 
-        messages.append(message)
+        if provider == "nvidia" and tool_calls:
+            # NVIDIA: el formato OpenAI exige que function.arguments viaje
+            # como string JSON en el historial de mensajes — nvidia_client
+            # ya lo parseó a dict para que _dispatch_tool lo use cómodo, así
+            # que hay que re-serializarlo antes de reenviar este turno como
+            # historial (confirmado con un 400 real: "invalid type: map,
+            # expected a string" cuando se manda el dict tal cual).
+            message_for_history = dict(message)
+            message_for_history["tool_calls"] = [
+                {**tc, "function": {**tc["function"], "arguments": json.dumps(tc["function"].get("arguments", {}), ensure_ascii=False)}}
+                for tc in tool_calls
+            ]
+            messages.append(message_for_history)
+        else:
+            messages.append(message)
+
         for call in tool_calls:
             fn = call.get("function", {})
             fn_name = fn.get("name")
@@ -431,11 +550,14 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
             tools_called.add(fn_name)
             yield f"__HB__:Ejecutando herramienta `{fn_name}`...\n"
             tool_result = _dispatch_tool(fn_name, fn_args)
-            messages.append({
-                "role": "tool",
-                "tool_name": fn_name,
-                "content": json.dumps(tool_result, ensure_ascii=False)
-            })
+            tool_content = json.dumps(tool_result, ensure_ascii=False)
+            if provider == "nvidia":
+                # NVIDIA/OpenAI: se correlaciona por tool_call_id, no por
+                # nombre — necesario si el modelo pide varias herramientas
+                # en el mismo turno.
+                messages.append({"role": "tool", "tool_call_id": call.get("id"), "content": tool_content})
+            else:
+                messages.append({"role": "tool", "tool_name": fn_name, "content": tool_content})
 
     # Se agotaron los turnos sin una respuesta final: forzar un último
     # llamado sin herramientas para no dejar la corrida colgada.
@@ -446,7 +568,7 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
                     "pedido, usando únicamente la información que ya obtuviste."
     })
     result = None
-    async for item in call_ollama_chat(messages, model_name, "Veredicto final", timeout=300.0, num_ctx=DEFAULT_NUM_CTX):
+    async for item in call_llm_chat(messages, model_name, "Veredicto final", provider=provider, timeout=300.0, num_ctx=DEFAULT_NUM_CTX):
         if isinstance(item, dict):
             result = item
         else:
@@ -461,5 +583,7 @@ async def run_agent_analysis(filepath: str, model_name: str, max_turns: int = MA
 
     matrix_rows = parse_test_matrix(final_text)
     gate = classify_severity(matrix_rows, danger_score=code_danger_score, danger_flags=code_danger_flags)
+    async for item in _generate_flow_diagram_section(filepath, model_name, provider):
+        yield item
     yield f"\n\n__GATE__:{json.dumps(gate, ensure_ascii=False)}\n"
     yield "\n\n✅ **Análisis completo.**\n"
